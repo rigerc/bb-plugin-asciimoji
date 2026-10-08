@@ -85,6 +85,64 @@ test('header visibility is configurable', async () => {
   slot.lifecycle.unmount();
 });
 
+test('child faces show a lineage indicator and clear accessible labels in the header and picker', async () => {
+  const app = await loadPluginApp(appDefinition);
+  let face = '(•ω•)';
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_child', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false, animation: 'off' },
+    rpc: {
+      get: () => ({ threadId: 'thr_child', parentThreadId: 'thr_parent', projectId: 'proj_personal',
+        face, custom: face === ':-)', source: face === ':-)' ? 'custom' as const : 'automatic' as const }),
+      getProjectDefault: () => ({ family: 'classic' as const, origin: 'global' as const, override: null }),
+      previews: () => [],
+      getLibrary: () => ({ favorites: [], recent: [] }),
+    },
+  });
+  try {
+    const button = await screen.findByRole('button', { name: 'Change child thread asciimoji: (•ω•)' });
+    expect(button.textContent).toBe('↳(•ω•)');
+    const mark = button.querySelector('.asciimoji-child-indicator')!;
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    expect(button.querySelector('.asciimoji-face')?.getAttribute('title')).toContain('Child thread');
+    fireEvent.click(button);
+    expect(await screen.findByText(/Child thread · Following global default/)).toBeTruthy();
+    fireEvent.click(button);
+    face = ':-)';
+    await slot.behavior.emitRealtime('changed', { threadId: 'thr_child' });
+    const updated = await screen.findByRole('button', { name: 'Change child thread asciimoji: :-)' });
+    expect(updated.textContent).toBe('↳:-)', 'saved custom faces keep the child indicator');
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('sidebar child faces show the branch marker without changing root faces', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const wrapper = document.createElement('div');
+  for (const threadId of ['thr_root', 'thr_child']) {
+    const row = document.createElement('div');
+    row.dataset.sidebarThreadShortcutTarget = '';
+    row.dataset.sidebarThreadId = threadId;
+    row.textContent = threadId;
+    wrapper.append(row);
+  }
+  document.body.append(wrapper);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const slot = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true, showActivity: false, animation: 'off' },
+    rpc: { getMany: ({ threadIds }) => threadIds.map(threadId => ({
+      threadId, projectId: 'proj_personal', face: ':-)', source: 'custom' as const, custom: true,
+      ...(threadId === 'thr_child' ? { parentThreadId: 'thr_root' } : {}),
+    })) },
+  });
+  try {
+    const child = await screen.findByRole('button', { name: 'Change sidebar asciimoji :-) for thr_child, child thread' });
+    const root = await screen.findByRole('button', { name: 'Change sidebar asciimoji :-) for thr_root' });
+    expect(child.textContent).toBe('↳:-)');
+    expect(root.textContent).toBe(':-)');
+    expect(child.querySelector('.asciimoji-face')?.getAttribute('aria-label')).toContain('Child thread');
+    expect(root.querySelector('.asciimoji-child-indicator')).toBeNull();
+  } finally { slot.lifecycle.unmount(); await scripts.lifecycle.dispose(); wrapper.remove(); }
+});
+
 test('optional sidebar faces follow updates and clean up on disposal', async () => {
   const app = await loadPluginApp(appDefinition);
   const row = document.createElement('div');
