@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { cliCommand, defineCli, defineRpcContract, type BbPluginApi } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
-import { defaultFace, FACES, generateFace, renderFace } from './faces.js';
+import { FACES, generateFace, renderFace } from './faces.js';
 
 const threadIdSchema = z.string().regex(/^thr_[a-zA-Z0-9_-]+$/).max(128);
 export const faceSchema = z.string().trim().min(1).max(40).refine(
@@ -29,7 +29,7 @@ export const rpcContract = defineRpcContract({
 
 export default function plugin(bb: BbPluginApi) {
   bb.settings.define({
-    showActivity: { type: 'boolean', label: 'Show activity expressions', default: false },
+    showActivity: { type: 'boolean', label: 'Show activity expressions', default: true },
     showHeader: { type: 'boolean', label: 'Show face in thread header', default: true },
     showSidebar: { type: 'boolean', label: 'Show faces in sidebar', default: false },
     useThemeColor: { type: 'boolean', label: 'Use theme color', default: false },
@@ -39,12 +39,10 @@ export default function plugin(bb: BbPluginApi) {
   async function get(threadId: string) {
     const thread = await bb.sdk.threads.get({ threadId });
     const value = await bb.storage.kv.get(key(threadId));
-    if (generatedChoice.safeParse(value).success) {
-      const generated = generateFace(threadId, thread.parentThreadId);
-      return { threadId, face: renderFace(generated), custom: true, generated };
-    }
     const stored = faceSchema.safeParse(value);
-    return { threadId, face: stored.success ? stored.data : defaultFace(threadId), custom: stored.success };
+    if (stored.success) return { threadId, face: stored.data, custom: true };
+    const generated = generateFace(threadId, thread.parentThreadId);
+    return { threadId, face: renderFace(generated), custom: generatedChoice.safeParse(value).success, generated };
   }
   async function set(threadId: string, value: string) {
     await bb.sdk.threads.get({ threadId });
@@ -57,7 +55,7 @@ export default function plugin(bb: BbPluginApi) {
     await bb.sdk.threads.get({ threadId });
     await bb.storage.kv.delete(key(threadId));
     bb.realtime.publish('changed', { threadId });
-    return { threadId, face: defaultFace(threadId), custom: false };
+    return get(threadId);
   }
   async function shuffle(threadId: string) {
     const current = await get(threadId);

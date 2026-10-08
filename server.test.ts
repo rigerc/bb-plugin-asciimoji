@@ -21,11 +21,11 @@ test('stable defaults, per-thread storage, reload persistence and reset', async 
   let { harness } = await host();
   try {
     const initial = await harness.behavior.callRpc('get', { threadId: first });
-    assert.deepEqual(initial, { threadId: first, face: defaultFace(first), custom: false });
+    assert.deepEqual(initial, { threadId: first, face: defaultFace(first), custom: false, generated: generateFace(first) });
     await harness.behavior.callRpc('set', { threadId: first, face: 'ʕ•ᴥ•ʔ' });
     harness = (await harness.lifecycle.reload(plugin)).harness;
     assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), { threadId: first, face: 'ʕ•ᴥ•ʔ', custom: true });
-    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: second }), { threadId: second, face: defaultFace(second), custom: false });
+    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: second }), { threadId: second, face: defaultFace(second), custom: false, generated: generateFace(second) });
     assert.deepEqual(await harness.behavior.callRpc('reset', { threadId: first }), initial);
   } finally { await harness.lifecycle.dispose(); }
 });
@@ -68,15 +68,15 @@ test('settings persist across reload and bulk lookup is bounded', async () => {
     await assert.rejects(harness.behavior.setSettings({ animation: 'invalid' }));
     const result = await harness.behavior.callRpc('getMany', { threadIds: [first, first, second, 'thr_missing'] });
     assert.deepEqual(result, [
-      { threadId: first, face: defaultFace(first), custom: false },
-      { threadId: second, face: defaultFace(second), custom: false },
+      { threadId: first, face: defaultFace(first), custom: false, generated: generateFace(first) },
+      { threadId: second, face: defaultFace(second), custom: false, generated: generateFace(second) },
     ]);
     await assert.rejects(harness.behavior.callRpc('getMany', { threadIds: Array(201).fill(first) }));
   } finally { await harness.lifecycle.dispose(); }
 });
 
 
-test('generated choices survive reload, inherit parent eyes, and reset to the original default', async () => {
+test('generated choices survive reload, inherit parent eyes, and reset to the generated default', async () => {
   let { harness } = await host();
   try {
     const generated = await harness.behavior.callRpc('generate', { threadId: first });
@@ -92,7 +92,7 @@ test('generated choices survive reload, inherit parent eyes, and reset to the or
     await harness.behavior.callRpc('set', { threadId: first, face: ':-)' });
     assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), { threadId: first, face: ':-)', custom: true });
     const reset = await harness.behavior.callRpc('reset', { threadId: second });
-    assert.deepEqual(reset, { threadId: second, face: defaultFace(second), custom: false });
+    assert.deepEqual(reset, { threadId: second, face: defaultFace(second, first), custom: false, generated: generateFace(second, first) });
     await assert.rejects(harness.behavior.callRpc('generate', { threadId: '../bad' }));
   } finally { await harness.lifecycle.dispose(); }
 });

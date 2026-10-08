@@ -1,14 +1,14 @@
 ## A familiar face for every thread
 
 Recognize your workspace’s conversations with small text faces like `ʕ•ᴥ•ʔ`
-and `(⌐■_■)`. Each thread starts with a stable automatic face in its header,
+and `(⌐■_■)`. Each thread starts with a stable generated face in its header,
 so returning to a conversation feels familiar across sessions.
 
 ## Make it yours
 
 Click the face to open a picker with 12 named presets. Choose a favorite,
 write your own custom asciimoji, or use Surprise me for a different preset.
-Generate a face creates a deterministic expression from the thread ID; child
+Every thread automatically gets a deterministic expression from the thread ID; child
 threads share their parent's hash-selected eyes. Reset to default returns to the thread’s automatic face.
 
 Choices are saved in bb and updates sync between connected windows. Each
@@ -33,7 +33,7 @@ Enable Show activity expressions to see running, waiting, and error feedback.
 Generated faces change their eyes; presets and custom faces use a small marker.
 Generated faces blink when idle and animated. Their expression frames keep a
 stable width, and a shared clock pauses in hidden windows and for reduced motion.
-Activity is off by default and follows BB's reported state.
+Activity is on by default and follows BB's reported state.
 
 ## Shell controls
 

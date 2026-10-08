@@ -14,8 +14,8 @@ export const FACES = [
 ] as const;
 
 // Stable across processes and clients; never depends on a title or provider.
-export function defaultFace(threadId: string): string {
-  return FACES[identityHash(threadId) % FACES.length]!.face;
+export function defaultFace(threadId: string, parentThreadId?: string | null): string {
+  return renderFace(generateFace(threadId, parentThreadId));
 }
 
 export type FaceState = 'idle' | 'running' | 'waiting' | 'error';
@@ -33,7 +33,7 @@ function identityHash(id: string): number {
   return hash >>> 0;
 }
 
-/** A separate palette leaves the original twelve automatic defaults unchanged. */
+/** Thread identity is deterministic; children share their parent's hash-selected eyes. */
 export function generateFace(threadId: string, parentThreadId?: string | null): GeneratedFace {
   const hash = identityHash(threadId);
   const eyeHash = identityHash(parentThreadId ?? threadId);

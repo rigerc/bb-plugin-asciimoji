@@ -2,7 +2,7 @@
 
 Give every thread a familiar face: `ʕ•ᴥ•ʔ`, `(⌐■_■)`, or your own.
 
-Each thread gets a stable default asciimoji in its header. Click it to choose
+Each thread automatically gets a stable generated asciimoji in its header. Click it to choose
 from 12 presets, write a custom face, pick a surprise, generate a face, or restore the default.
 Saved choices persist across sessions and sync between connected windows.
 
@@ -24,7 +24,7 @@ Open **Settings → Plugins → Asciimoji** to configure:
 - **Show face in thread header** — enabled by default.
 - **Show faces in sidebar** — optional, disabled by default.
 - **Use theme color** — optional, disabled by default. Colors faces with your theme’s primary color.
-- **Show activity expressions** — optional, disabled by default. Generated faces change expression with activity; presets and custom faces show a small activity marker.
+- **Show activity expressions** — enabled by default. Generated faces change expression with activity; presets and custom faces show a small activity marker.
 - **Animation style** — Off, Subtle (default), or Playful.
 
 Subtle animates face changes and hover; Playful adds a gentle idle bob.
@@ -59,15 +59,16 @@ line. Control characters are rejected. Presets can repeat across threads.
 
 ### Generated faces and activity
 
-Choose **Generate a face** in the picker or run `bb asciimoji generate`. The
-thread ID selects curated delimiters, eyes, and a mouth without model calls.
-Child threads inherit their parent's hash-selected eyes. Generated faces are
-saved as a versioned choice and share the same renderer in the header, picker,
-and sidebar. Existing automatic defaults and saved custom faces stay intact;
-Reset restores the original automatic default.
+Every thread automatically uses a generated face. The thread ID selects curated
+delimiters, eyes, and a mouth without model calls.
+Child threads inherit their parent's hash-selected eyes. Explicit generated selections are
+saved as a versioned choice. Automatic faces need no stored selection. Both share the same renderer in the header, picker,
+and sidebar. Saved presets and custom faces remain explicit overrides. Choose
+**Use generated face** or run `bb asciimoji generate` to replace an override;
+Reset restores the automatic generated face.
 
-Enable **Show activity expressions** to display idle, running, waiting for user
-input, and error states. Running faces glance sideways; waiting faces use `?`
+**Show activity expressions** is enabled by default and displays idle, running,
+waiting for user input, and error states. Running faces glance sideways; waiting faces use `?`
 eyes and errors use `x`. Idle faces blink when animation is enabled. Presets and
 custom text stay as saved and use a separate `·`, `?`, or `!` marker. These
 states reflect BB's reported thread activity; running does not distinguish

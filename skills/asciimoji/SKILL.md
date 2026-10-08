@@ -21,9 +21,11 @@ user’s theme primary color in the header, picker, and sidebar. Colors follow
 theme changes automatically. Animations honor system reduced-motion preferences. Settings update live.
 
 `bb asciimoji generate` saves a deterministic face assembled from the thread ID.
-Child faces share the parent's hash-selected eyes. Existing defaults and custom
-choices stay intact; reset restores the original automatic preset.
-Enable `showActivity` (default false) in plugin settings or with
+Child faces share the parent's hash-selected eyes. Generated faces are automatic
+for every thread; saved presets and custom
+choices remain explicit overrides. Generate replaces an override; reset restores
+the automatic generated face.
+`showActivity` is enabled by default; configure it in plugin settings or with
 `bb plugin config asciimoji set showActivity true`. Generated faces express idle,
 running, waiting, and error; custom faces and presets keep their text and show a
 small marker. Animation Off keeps expressions static. Motion pauses in hidden

@@ -17,7 +17,7 @@ async function mount(settings: Record<string, string | boolean> = {}) {
   const app = await loadPluginApp(appDefinition);
   let face = ':-)';
   const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
-    settings,
+    settings: { showActivity: false, ...settings },
     rpc: {
       generate: ({ threadId }) => { const generated = generateFace(threadId); face = renderFace(generated); return { threadId, face, custom: true, generated }; },
       activity: ({ threadIds }) => threadIds.map(threadId => ({ threadId, state: 'running' as const })),
@@ -157,7 +157,7 @@ test('sidebar face reserves space beside the visible title instead of inside BBâ
 test('generated picker choice renders activity without changing the saved base face', async () => {
   const { slot } = await mount({ showActivity: true, animation: 'off' });
   fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :-), running' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Generate a face' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use generated face' }));
   const generated = generateFace('thr_one');
   const button = await screen.findByRole('button', { name: `Change thread asciimoji: ${renderFace(generated)}, running` });
   expect(button.textContent).toBe(renderFace(generated, { state: 'running' }));
@@ -228,4 +228,22 @@ test('one animation clock pauses for hidden windows and reduced motion and dispo
     window.matchMedia = originalMedia;
     vi.useRealTimers();
   }
+});
+
+test('generated identities and activity are automatic without opt-in settings', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const generated = generateFace('thr_one');
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    rpc: {
+      get: () => ({ threadId: 'thr_one', face: renderFace(generated), custom: false, generated }),
+      activity: () => [{ threadId: 'thr_one', state: 'waiting' }],
+    },
+  });
+  try {
+    const button = await screen.findByRole('button', { name: `Change thread asciimoji: ${renderFace(generated)}, waiting` });
+    expect(button.textContent).toBe(renderFace(generated, { state: 'waiting' }));
+    fireEvent.click(button);
+    const reset = await screen.findByRole('button', { name: 'Reset to default' });
+    expect((reset as HTMLButtonElement).disabled).toBe(true);
+  } finally { slot.lifecycle.unmount(); }
 });
