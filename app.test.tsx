@@ -116,6 +116,28 @@ test('optional sidebar faces follow updates and clean up on disposal', async () 
   row.remove(); addedRow.remove();
 });
 
+test('sidebar marks saved custom child faces without changing their text', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const row = document.createElement('div');
+  row.dataset.sidebarThreadShortcutTarget = '';
+  row.dataset.sidebarThreadId = 'thr_child';
+  row.textContent = 'Child title';
+  document.body.append(row);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const slot = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true, showActivity: false, animation: 'off', sidebarWidth: 'compact' },
+    rpc: { getMany: () => [{ threadId: 'thr_child', parentThreadId: 'thr_parent', face: 'ʕ•ᴥ•ʔ', custom: true,
+      projectId: 'proj_personal', source: 'custom' as const }] },
+  });
+  try {
+    const button = await screen.findByRole('button', { name: 'Change sidebar asciimoji ʕ•ᴥ•ʔ for thr_child, child thread' });
+    expect(button.querySelector('.asciimoji-child-marker')?.textContent).toBe('↳');
+    expect(button.querySelector('.asciimoji-child-glyph')?.textContent).toBe('ʕ•ᴥ•ʔ');
+    expect(button.querySelector('[data-sidebar-width="compact"]')).toBeTruthy();
+    expect(button.querySelector('.asciimoji-face')?.getAttribute('title')).toBe('Child thread: ʕ•ᴥ•ʔ');
+  } finally { slot.lifecycle.unmount(); await scripts.lifecycle.dispose(); row.remove(); }
+});
+
 test('sidebar is off by default', async () => {
   const app = await loadPluginApp(appDefinition);
   const row = document.createElement('div');
@@ -477,13 +499,17 @@ test('mounted automatic child refreshes when its parent changes', async () => {
   let face = '(•ω•)';
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_child', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false },
-    rpc: { get: () => ({ threadId: 'thr_child', face, custom: false, projectId: 'proj_personal', source: 'automatic' as const }) },
+    rpc: { get: () => ({ threadId: 'thr_child', parentThreadId: 'thr_parent', face, custom: false, projectId: 'proj_personal', source: 'automatic' as const }) },
   });
   try {
-    await screen.findByRole('button', { name: 'Change thread asciimoji: (•ω•)' });
+    const button = await screen.findByRole('button', { name: 'Change child thread asciimoji: (•ω•)' });
+    expect(button.querySelector('.asciimoji-child-marker')?.textContent).toBe('↳');
+    expect(button.querySelector('.asciimoji-face')?.getAttribute('title')).toBe('Child thread: (•ω•)');
     face = '(^ω^)';
     await slot.behavior.emitRealtime('changed', { threadId: 'thr_parent', affectedThreadIds: ['thr_child'] });
-    await screen.findByRole('button', { name: 'Change thread asciimoji: (^ω^)' });
+    await screen.findByRole('button', { name: 'Change child thread asciimoji: (^ω^)' });
+    fireEvent.click(button);
+    expect(await screen.findByText(/Generated faces inherit their parent's eyes when the family matches/)).toBeTruthy();
   } finally { slot.lifecycle.unmount(); }
 });
 
