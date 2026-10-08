@@ -7,7 +7,8 @@ const threadIdSchema = z.string().regex(/^thr_[a-zA-Z0-9_-]+$/).max(128);
 export const faceSchema = z.string().refine(value => faceValidationError(value) === null,
   'Use a visible face of at most 40 characters on one line, without control or formatting characters.').transform(value => value.trim());
 export const familySchema = z.enum(FAMILY_IDS);
-const projectDefaultSchema = z.object({ family: familySchema });
+const originSchema = z.enum(['global', 'project']);
+const projectDefaultSchema = z.object({ family: familySchema, origin: originSchema, override: familySchema.nullable() });
 const generatedSchema = z.object({
   version: z.union([z.literal(1), z.literal(2)]), family: familySchema.optional(), ears: z.tuple([z.string().length(1), z.string().length(1)]),
   eyes: z.string().length(1), mouth: z.string().length(1), blinkOffset: z.number().int().min(0).max(3999), accessory: z.string().length(1).optional(),
@@ -38,35 +39,55 @@ export const rpcContract = defineRpcContract({
   activity: { input: z.object({ threadIds: z.array(threadIdSchema).max(200) }).strict(),
     output: z.array(z.object({ threadId: threadIdSchema, state: stateSchema })) },
   getProjectDefault: { input: threadInput, output: projectDefaultSchema },
-  setProjectDefault: { input: threadInput.extend({ family: familySchema }), output: projectDefaultSchema },
+  setProjectDefault: { input: threadInput.extend({ family: familySchema.nullable() }), output: projectDefaultSchema },
   reset: { input: threadInput, output: identitySchema },
 });
 
 export default function plugin(bb: BbPluginApi) {
-  bb.settings.define({
-    showActivity: { type: 'boolean', label: 'Show activity expressions', default: true },
-    showHeader: { type: 'boolean', label: 'Show face in thread header', default: true },
-    showSidebar: { type: 'boolean', label: 'Show faces in sidebar', default: false },
-    useThemeColor: { type: 'boolean', label: 'Use theme color', default: false },
-    animation: { type: 'select', label: 'Animation style', options: ['off', 'subtle', 'playful'], default: 'subtle' },
+  const settings = bb.settings.define({
+    showHeader: { type: 'boolean', label: 'Show face in thread header', description: 'Show the thread face in the thread header.', default: true },
+    showSidebar: { type: 'boolean', label: 'Show faces beside threads in sidebar', description: 'Show a face beside each thread in the sidebar.', default: false },
+    showActivity: { type: 'boolean', label: 'Show activity state', description: 'Show running, waiting, and error feedback on faces.', default: true },
+    activityStyle: { type: 'select', label: 'Activity presentation', description: 'Expressions change generated faces; markers add a small status symbol.', options: ['expressions', 'markers'], default: 'expressions' },
+    useThemeColor: { type: 'boolean', label: 'Use theme accent color', description: 'Color faces with the active theme primary color.', default: false },
+    animation: { type: 'select', label: 'Animation style', description: 'Off disables motion; Subtle and Playful animate working faces.', options: ['off', 'subtle', 'playful'], default: 'subtle' },
+    sidebarWidth: { type: 'select', label: 'Sidebar face width', description: 'How much horizontal space sidebar faces may use.', options: ['compact', 'standard', 'expanded'], default: 'standard' },
+    defaultFamily: { type: 'select', label: 'Default face family', description: 'Global fallback for projects without an explicit override.', options: [...FAMILY_IDS], default: 'classic' },
   });
   const key = (threadId: string) => `thread:${threadId}`;
   const projectKey = (projectId: string) => `project:${projectId}:family`;
-  async function projectFamily(projectId: string): Promise<FaceFamily> {
+  async function globalFamily(): Promise<FaceFamily> {
+    try {
+      const values = await settings.get();
+      const parsed = familySchema.safeParse((values as Record<string, unknown>).defaultFamily);
+      return parsed.success ? parsed.data : 'classic';
+    } catch { return 'classic'; }
+  }
+  async function projectOverride(projectId: string): Promise<FaceFamily | null> {
     const stored = familySchema.safeParse(await bb.storage.kv.get(projectKey(projectId)));
-    return stored.success ? stored.data : 'classic';
+    return stored.success ? stored.data : null;
+  }
+  async function projectFamily(projectId: string): Promise<FaceFamily> {
+    return (await projectOverride(projectId)) ?? (await globalFamily());
   }
   async function getProjectDefault(threadId: string) {
     const thread = await bb.sdk.threads.get({ threadId });
-    return { family: await projectFamily(thread.projectId) };
+    const override = await projectOverride(thread.projectId);
+    const effective = override ?? (await globalFamily());
+    return { family: effective, origin: (override ? 'project' : 'global') as 'project' | 'global', override };
   }
-  async function setProjectDefault(threadId: string, family: FaceFamily) {
+  async function setProjectDefault(threadId: string, family: FaceFamily | null) {
     const thread = await bb.sdk.threads.get({ threadId });
-    if (family === 'classic') await bb.storage.kv.delete(projectKey(thread.projectId));
+    if (family === null) await bb.storage.kv.delete(projectKey(thread.projectId));
     else await bb.storage.kv.set(projectKey(thread.projectId), family);
     bb.realtime.publish('changed', { projectId: thread.projectId });
-    return { family };
+    return getProjectDefault(threadId);
   }
+  settings.onChange((next, prev) => {
+    const before = (prev as Record<string, unknown>).defaultFamily;
+    const after = (next as Record<string, unknown>).defaultFamily;
+    if (after !== before) bb.realtime.publish('changed', { globalDefault: after ?? 'classic' });
+  });
   /** Automatic children inherit their parent's eyes, so a parent change can alter
    * their derived faces. Collect automatic descendants for targeted invalidation.
    * Traversal stops at pinned/custom threads: their frozen faces block propagation
@@ -290,12 +311,13 @@ export default function plugin(bb: BbPluginApi) {
         return { exitCode: 0, stdout: input.options.json ? JSON.stringify(library) : input.options.remove ? 'Favorite removed' : 'Favorite saved' };
       } }),
       'project-default': cliCommand({ summary: 'Show or set this thread’s project face family', options,
-        positionals: [{ name: 'family', description: 'classic, bear, robot, cat, or minimal', required: false }],
+        positionals: [{ name: 'family', description: 'classic, bear, robot, cat, minimal, or inherit', required: false }],
         async run(input, ctx) {
           const threadId = target(input.options.thread, ctx.threadId);
-          const value = input.positionals.family === undefined
-            ? await getProjectDefault(threadId)
-            : await setProjectDefault(threadId, familySchema.parse(input.positionals.family));
+          const raw = input.positionals.family;
+          const value = raw === undefined ? await getProjectDefault(threadId)
+            : raw === 'inherit' ? await setProjectDefault(threadId, null)
+            : await setProjectDefault(threadId, familySchema.parse(raw));
           return { exitCode: 0, stdout: input.options.json ? JSON.stringify(value) : value.family };
         } }),
       reset: cliCommand({ summary: 'Restore the automatic face', options, async run(input, ctx) {

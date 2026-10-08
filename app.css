@@ -1,5 +1,8 @@
 .asciimoji-face { display: inline-block; white-space: nowrap; transform-origin: center; }
 .asciimoji-sidebar-face { font-family: monospace; font-size: 10px; max-width: 10ch; overflow: hidden; text-overflow: ellipsis; margin-right: 6px; vertical-align: middle; }
+.asciimoji-sidebar-face[data-sidebar-width="compact"] { max-width: 6ch; }
+.asciimoji-sidebar-face[data-sidebar-width="standard"] { max-width: 10ch; }
+.asciimoji-sidebar-face[data-sidebar-width="expanded"] { max-width: 16ch; }
 .asciimoji-face[data-motion="subtle"] { animation: asciimoji-arrive 220ms ease-out; }
 .asciimoji-face[data-motion="playful"]:not([data-activity="running"]) { animation: asciimoji-arrive 280ms ease-out; }
 .asciimoji-face[data-motion="playful"][data-activity="running"] { animation: asciimoji-arrive 280ms ease-out, asciimoji-bob 6s ease-in-out 280ms infinite; }
@@ -12,3 +15,8 @@ button:hover .asciimoji-face[data-motion="subtle"][data-activity="running"], but
 .asciimoji-sidebar-control { position: relative; z-index: 1; pointer-events: auto; min-height: 24px; min-width: 24px; }
 [data-asciimoji-hidden="true"] .asciimoji-face { animation-play-state: paused; }
 .asciimoji-preview > .asciimoji-face { max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.asciimoji-settings-preview { display: grid; gap: 0.75rem; }
+.asciimoji-settings-preview-grid { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.asciimoji-settings-preview-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; border: 1px solid var(--border, #e5e5e5); border-radius: 0.5rem; padding: 0.5rem 0.75rem; }
+.asciimoji-settings-preview-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
+.asciimoji-settings-preview-controls label { display: grid; gap: 0.25rem; font-size: 0.8rem; }

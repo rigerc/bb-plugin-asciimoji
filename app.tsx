@@ -4,75 +4,93 @@ import './app.css';
 import { enableSidebar, getTargets, mountSidebar, subscribeTargets } from './sidebar.js';
 import { useSettings, definePluginApp, useRealtime, useRealtimeConnectionState, useRpc } from '@get-bb/plugin-sdk/app';
 import type { rpcContract, Identity, LibraryFace } from './server.js';
-import { FACES, FACE_FAMILIES, countFaceCharacters, faceValidationError, renderFace, type FaceExpressions, type FaceFamily, type GeneratedFace, type FaceState } from './faces.js';
+import { FACES, FACE_FAMILIES, countFaceCharacters, faceValidationError, renderFace, resolveFaceDisplay, type ActivityStyle, type FaceExpressions, type FaceFamily, type GeneratedFace, type FaceState, type SidebarWidth } from './faces.js';
 import { useFaceClock } from './hooks/useFaceClock.js';
 import { useActivity } from './hooks/useActivity.js';
 import { Button } from './components/ui/button.js';
 import { Input } from './components/ui/input.js';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './components/ui/dialog.js';
+import AsciimojiSettingsPreview from './components/AsciimojiSettingsPreview.js';
 
-function usePreferences() {
+export function usePreferences() {
   const { values } = useSettings();
+  const sidebarWidth: SidebarWidth = values?.sidebarWidth === 'compact' || values?.sidebarWidth === 'expanded' ? values.sidebarWidth : 'standard';
+  const activityStyle: ActivityStyle = values?.activityStyle === 'markers' ? 'markers' : 'expressions';
+  const defaultFamily: FaceFamily = (FACE_FAMILIES.some(item => item.id === values?.defaultFamily) ? values?.defaultFamily : 'classic') as FaceFamily;
   return { showActivity: values?.showActivity !== false, showHeader: values?.showHeader !== false, showSidebar: values?.showSidebar === true, useThemeColor: values?.useThemeColor === true,
-    animation: values?.animation === 'off' || values?.animation === 'playful' ? values.animation : 'subtle' };
+    animation: values?.animation === 'off' || values?.animation === 'playful' ? values.animation : 'subtle', sidebarWidth, activityStyle, defaultFamily };
 }
-function Face({ face, generated, expressions, state, animation, useThemeColor, sidebar = false }: {
+export function Face({ face, generated, expressions, state, animation, useThemeColor, sidebar = false, activityStyle = 'expressions', sidebarWidth = 'standard' }: {
   face: string; generated?: GeneratedFace; expressions?: FaceExpressions; state?: FaceState; animation: string; useThemeColor: boolean; sidebar?: boolean;
+  activityStyle?: ActivityStyle; sidebarWidth?: SidebarWidth;
 }) {
   const isWorking = state === 'running';
-  const elapsed = useFaceClock(!!generated && isWorking && animation !== 'off');
-  const displayed = generated && state !== undefined
-    ? renderFace(generated, { state, elapsed, animation: isWorking && animation !== 'off' && elapsed > 0 })
-    : state && state !== 'idle' ? expressions?.[state] ?? face : face;
-  return <span key={face} className={`asciimoji-face${useThemeColor ? ' text-primary' : ''}${sidebar ? ' asciimoji-sidebar-face' : ''}`}
-    data-motion={animation} data-activity={state ?? 'none'} title={state ? `Activity: ${state}` : undefined}>
-    {displayed}{!generated && state && !(state !== 'idle' && expressions?.[state]) && <span className="asciimoji-activity" aria-label={`Activity: ${state}`}>
-      {state === 'running' ? '·' : state === 'waiting' ? '?' : state === 'error' ? '!' : ''}
-    </span>}
+  const elapsed = useFaceClock(!!generated && isWorking && animation !== 'off' && activityStyle === 'expressions');
+  const { displayed, marker } = resolveFaceDisplay(face, { generated, expressions, state, activityStyle, elapsed,
+    animation: isWorking && animation !== 'off' && elapsed > 0 });
+  return <span key={face + activityStyle + (state ?? 'none')} className={`asciimoji-face${useThemeColor ? ' text-primary' : ''}${sidebar ? ' asciimoji-sidebar-face' : ''}`}
+    data-motion={animation} data-activity={state ?? 'none'} {...(sidebar ? { 'data-sidebar-width': sidebarWidth } : {})}
+    title={face + (state && state !== 'idle' ? ` (Activity: ${state})` : '')} aria-label={face + (state && state !== 'idle' ? `, ${state}` : '')}>
+    {displayed}{marker && <span className="asciimoji-activity" aria-hidden="true">{marker}</span>}
   </span>;
 }
 
-function ProjectFamily({ threadId, disabled, onFamily }: { threadId: string; disabled: boolean; onFamily: (family: FaceFamily) => void }) {
+export interface ProjectDefaultInfo { family: FaceFamily; origin: 'global' | 'project'; override: FaceFamily | null; }
+function ProjectFamily({ threadId, disabled, onFamily }: { threadId: string; disabled: boolean; onFamily: (info: ProjectDefaultInfo) => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const connection = useRealtimeConnectionState();
-  const [family, setFamily] = useState<FaceFamily | null>(null);
+  const [info, setInfo] = useState<ProjectDefaultInfo | null>(null);
+  const [globalFamily, setGlobalFamily] = useState<FaceFamily | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const revision = useRef(0);
   const alive = useRef(true);
+  const { values } = useSettings();
+  useEffect(() => {
+    const parsed = FACE_FAMILIES.some(item => item.id === values?.defaultFamily) ? (values?.defaultFamily as FaceFamily) : 'classic';
+    setGlobalFamily(parsed);
+  }, [values?.defaultFamily]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const load = useCallback(() => {
     const version = ++revision.current;
     void rpc.call('getProjectDefault', { threadId }).then(value => {
-      if (version === revision.current) { setFamily(value.family); onFamily(value.family); setError(null); }
+      if (version === revision.current) { setInfo({ family: value.family, origin: value.origin, override: value.override }); onFamily({ family: value.family, origin: value.origin, override: value.override }); setError(null); }
     }, cause => { if (version === revision.current) setError(String(cause)); });
   }, [rpc, threadId, onFamily]);
   useEffect(() => { load(); return () => { revision.current++; }; }, [load, connection]);
   useRealtime('changed', payload => {
-    if (payload && typeof payload === 'object' && 'projectId' in payload) load();
+    if (payload && typeof payload === 'object' && ('projectId' in payload || 'globalDefault' in payload || 'globalFamily' in payload)) load();
   });
-  async function save(next: FaceFamily) {
+  async function save(next: FaceFamily | null) {
     if (pending) return;
     setPending(true);
     setError(null);
     const version = ++revision.current;
     try {
       const value = await rpc.call('setProjectDefault', { threadId, family: next });
-      if (version === revision.current) { setFamily(value.family); onFamily(value.family); }
+      if (version === revision.current) { setInfo({ family: value.family, origin: value.origin, override: value.override }); onFamily({ family: value.family, origin: value.origin, override: value.override }); }
     } catch (cause) { if (version === revision.current) setError(String(cause)); }
     finally { if (alive.current) setPending(false); }
   }
+  const selectValue = info === null ? '' : info.override ?? 'global';
+  const globalName = FACE_FAMILIES.find(item => item.id === (globalFamily ?? info?.family ?? 'classic'))?.name ?? 'Classic';
   return <div className="space-y-2">
     <label className="flex items-center justify-between gap-2 text-sm">
       Project default
-      <select aria-label="Project default face family" value={family ?? ''} disabled={disabled || pending || family === null}
+      <select aria-label="Project default face family" value={selectValue} disabled={disabled || pending || info === null}
         className="rounded-md border border-input bg-background px-2 py-1 text-sm"
-        onChange={event => void save(event.target.value as FaceFamily)}>
-        {family === null && <option value="">Loading…</option>}
-        {FACE_FAMILIES.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        onChange={event => void save(event.target.value === 'global' ? null : (event.target.value as FaceFamily))}>
+        {info === null && <option value="">Loading…</option>}
+        <option value="global">Use global default ({globalName})</option>
+        {FACE_FAMILIES.map(item => <option key={item.id} value={item.id}>{item.name}{info?.override === item.id ? ' (override)' : ''}</option>)}
       </select>
     </label>
-    <p className="text-xs text-muted-foreground">Applies to this project’s automatic faces, including new threads. Saved thread choices stay as they are.</p>
+    <p className="text-xs text-muted-foreground">{
+      info === null ? 'Loading project default…'
+      : info.origin === 'project'
+        ? `Project override: ${FACE_FAMILIES.find(item => item.id === info.family)?.name}. Automatic faces in this project use it. Saved thread choices stay as they are.`
+        : `Inheriting global default: ${FACE_FAMILIES.find(item => item.id === info.family)?.name}. Set a project override or change the global default in plugin settings.`
+    }</p>
     {error && <div><p role="alert" className="text-sm text-destructive">Could not update the project default. {error}</p><Button variant="outline" onClick={load} disabled={pending}>Retry project default</Button></div>}
   </div>;
 }
@@ -166,7 +184,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   const [expressions, setExpressions] = useState<FaceExpressions>({});
   const [editing, setEditing] = useState(false);
   const [previewState, setPreviewState] = useState<FaceState>('idle');
-  const [family, setFamily] = useState<FaceFamily | null>(null);
+  const [projectInfo, setProjectInfo] = useState<ProjectDefaultInfo | null>(null);
   const [previews, setPreviews] = useState<Partial<Record<FaceFamily, string>>>({});
   const [previewError, setPreviewError] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -211,8 +229,10 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
     if ('threadIds' in payload && Array.isArray(payload.threadIds)) {
       for (const id of payload.threadIds) if (typeof id === 'string') ids.add(id);
     }
-    if (ids.has(threadId) ||
-        ('projectId' in payload && typeof payload.projectId === 'string' && payload.projectId === identity?.projectId)) load();
+    if (ids.has(threadId)) { load(); if (open) loadPreviews(); return; }
+    if ('projectId' in payload && typeof payload.projectId === 'string' && payload.projectId === identity?.projectId) load();
+    else if (('globalDefault' in payload || 'globalFamily' in payload) && identity?.source === 'automatic') load();
+    else if (('globalDefault' in payload || 'globalFamily' in payload) && !identity) load();
     // A parent override can change the authoritative previews without changing a pinned child.
     if (open) loadPreviews();
   });
@@ -243,8 +263,11 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   const preview = editing ? draft : identity?.face ?? '';
   const previewExpressions = editing ? expressions : identity?.expressions;
   const previewActivity = editing ? previewState : states[threadId];
-  const selectedFamily = identity?.generated ? (identity.generated.family ?? 'classic') : family;
+  const selectedFamily = identity?.generated ? (identity.generated.family ?? 'classic') : projectInfo?.family;
   const familyName = FACE_FAMILIES.find(item => item.id === selectedFamily)?.name ?? 'project default';
+  const scopeLabel = identity?.source === 'automatic'
+    ? projectInfo?.origin === 'project' ? `Following project override: ${familyName}` : `Following global default: ${familyName}`
+    : identity?.generated ? 'Saved for this thread: ' + familyName : 'Saved for this thread: ' + (identity?.source === 'preset' ? 'preset' : 'custom face');
   if (!visible) return null;
   return <Dialog open={open} onOpenChange={changeOpen}>
     {!pickerOnly && <DialogTrigger asChild>
@@ -253,7 +276,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
           : error ? 'Retry thread asciimoji' : 'Loading thread asciimoji'}
         onClick={event => { if (!identity) { event.preventDefault(); load(); } }}>
         {identity ? <Face face={identity.face} generated={identity.generated} expressions={identity.expressions}
-          state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} />
+          state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
           : error ? <span title={error}>Retry face</span> : 'Loading…'}
       </Button>
     </DialogTrigger>}
@@ -261,18 +284,17 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
       onCloseAutoFocus={event => { if (restoreFocus) { event.preventDefault(); restoreFocus(); } }}>
       <DialogHeader>
         <DialogTitle>Your thread’s asciimoji</DialogTitle>
-        <DialogDescription>Choose a face, keep a family, or follow your project default.</DialogDescription>
+        <DialogDescription>Choose a face, keep a family, or use the automatic face from your global and project defaults.</DialogDescription>
       </DialogHeader>
       {!identity ? <div><p role={error ? 'alert' : 'status'}>{error ?? 'Loading face…'}</p>
         {error && <Button variant="outline" onClick={load}>Retry face</Button>}</div> : <>
         <div className="space-y-2">
           <div className="asciimoji-preview rounded-lg bg-muted p-5 text-center font-mono text-2xl" title={preview} aria-label={editing ? 'Draft asciimoji preview' : 'Current asciimoji'}>
             <Face face={preview} generated={editing ? undefined : identity.generated} expressions={previewExpressions} state={previewActivity}
-              animation={preferences.animation} useThemeColor={preferences.useThemeColor} />
+              animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
           </div>
           <p className="text-xs text-muted-foreground" role="status">
-            {identity.source === 'automatic' ? 'Following project: ' + familyName
-              : identity.generated ? 'Saved for this thread: ' + familyName : 'Saved for this thread: ' + (identity.source === 'preset' ? 'preset' : 'custom face')}
+            {scopeLabel}
           </p>
         </div>
         <div className="space-y-2">
@@ -283,7 +305,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
               className="h-auto flex-col gap-1 px-1 py-2" disabled={pending || !previews[item.id]}
               aria-pressed={!!identity.generated && (identity.generated.family ?? 'classic') === item.id}
               aria-label={'Keep ' + item.name + ' family'} onClick={() => void save('generate', undefined, item.id)}>
-              <span className="font-mono text-xs"><Face face={previews[item.id] ?? '…'} animation={preferences.animation} useThemeColor={preferences.useThemeColor} /></span>
+              <span className="font-mono text-xs"><Face face={previews[item.id] ?? '…'} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} /></span>
               <span className="text-xs text-muted-foreground">{item.name}</span>
             </Button>)}
           </div>
@@ -299,7 +321,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
               className="h-auto flex-col gap-1 px-1 py-3" disabled={pending}
               aria-pressed={!identity.generated && identity.face === item.face}
               aria-label={'Choose ' + item.name + ': ' + item.face} onClick={() => void save('set', { face: item.face })}>
-              <span className="font-mono text-xs"><Face face={item.face} animation={preferences.animation} useThemeColor={preferences.useThemeColor} /></span>
+              <span className="font-mono text-xs"><Face face={item.face} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} /></span>
               <span className="text-xs text-muted-foreground">{item.name}</span>
             </Button>)}
           </div>
@@ -345,21 +367,21 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
             <summary className="cursor-pointer text-xs text-muted-foreground">Preview at header and sidebar size</summary>
             <div className="mt-2 flex items-center gap-3">
               <span className="max-w-40 truncate font-mono text-xs" aria-label="Header size preview" title={preview}>
-                <Face face={preview} expressions={previewExpressions} state={previewState} animation="off" useThemeColor={preferences.useThemeColor} />
+                <Face face={preview} expressions={previewExpressions} state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
               </span>
               <span aria-label="Sidebar size preview" title={preview}><Face face={preview} expressions={previewExpressions}
-                state={previewState} animation="off" useThemeColor={preferences.useThemeColor} sidebar /></span>
+                state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} /></span>
             </div>
           </details>
         </form>
         {error && <div><p role="alert" className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={load} disabled={pending}>Reload face</Button></div>}
         <details>
           <summary className="cursor-pointer text-sm">Project defaults</summary>
-          <div className="mt-2"><ProjectFamily threadId={threadId} disabled={pending} onFamily={setFamily} /></div>
+          <div className="mt-2"><ProjectFamily threadId={threadId} disabled={pending} onFamily={setProjectInfo} /></div>
         </details>
         <div className="flex justify-between gap-2">
           <Button variant="outline" disabled={pending} onClick={() => void save('shuffle')}>Surprise me</Button>
-          <Button variant="ghost" disabled={pending || identity.source === 'automatic'} onClick={() => void save('reset')}>Follow project default</Button>
+          <Button variant="ghost" disabled={pending || identity.source === 'automatic'} onClick={() => void save('reset')}>Use automatic face</Button>
         </div>
       </>}
     </DialogContent>
@@ -438,6 +460,15 @@ function SidebarFaces() {
       else void loadSome([...new Set(ids)]);
       return;
     }
+    if ('globalDefault' in payload || 'globalFamily' in payload) {
+      const relevant = [...visible].filter(id => {
+        const cached = facesRef.current[id];
+        return !cached || cached.source === 'automatic';
+      });
+      if (!relevant.length) return;
+      void loadSome(relevant);
+      return;
+    }
     if ('projectId' in payload && typeof payload.projectId === 'string') {
       const relevant = [...visible].filter(id => {
         const cached = facesRef.current[id];
@@ -448,16 +479,20 @@ function SidebarFaces() {
     }
   });
   if (!preferences.showSidebar) return null;
-  return <>{targets.map(({ threadId, element }, index) => createPortal(
+  return <>{targets.map(({ threadId, element }, index) => {
+    const cached = faces[threadId];
+    const label = cached ? `Change sidebar asciimoji ${cached.face} for ${threadId}${states[threadId] ? ', ' + states[threadId] : ''}`
+      : `Change sidebar asciimoji for ${threadId}${states[threadId] ? ', ' + states[threadId] : ''}`;
+    return createPortal(
     <Button variant="ghost" className="asciimoji-sidebar-control h-auto p-0"
-      aria-label={`Change sidebar asciimoji for ${threadId}${states[threadId] ? ', ' + states[threadId] : ''}`}
+      aria-label={label}
       onPointerDown={event => event.stopPropagation()}
       onClick={event => { event.preventDefault(); event.stopPropagation(); opener.current = event.currentTarget; setPickerThread(threadId); }}>
       <span title={`Thread asciimoji: ${faces[threadId]?.face ?? 'Loading…'}`}>
         <Face face={faces[threadId]?.face ?? '…'} generated={faces[threadId]?.generated} expressions={faces[threadId]?.expressions}
-          state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} sidebar />
+          state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} />
       </span>
-    </Button>, element, `${threadId}:${index}`))}
+    </Button>, element, `${threadId}:${index}`); })}
     {pickerThread && <ThreadFace key={pickerThread} threadId={pickerThread} pickerOnly onClose={() => setPickerThread(null)}
       restoreFocus={() => { if (opener.current?.isConnected) opener.current.focus(); }} />}
   </>;
@@ -469,5 +504,10 @@ export default definePluginApp(app => {
   app.slots.experimental_threadHeaderAction({
     id: 'face', title: 'Thread asciimoji',
     component: ({ threadId }) => <ThreadFace key={threadId} threadId={threadId} />,
+  });
+  app.slots.settingsSection({
+    id: 'appearance-preview', title: 'Appearance preview',
+    description: 'Preview families, activity states, and sidebar widths without changing saved settings.',
+    component: AsciimojiSettingsPreview,
   });
 });

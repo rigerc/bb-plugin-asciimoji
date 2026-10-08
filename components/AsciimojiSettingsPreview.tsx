@@ -1,0 +1,82 @@
+import { useMemo, useState } from 'react';
+import { useSettings } from '@get-bb/plugin-sdk/app';
+import { FACE_FAMILIES, generateFaceV2, renderFace, type FaceFamily, type FaceState, type SidebarWidth } from '../faces.js';
+import { Face, usePreferences } from '../app.js';
+
+const STATES: FaceState[] = ['idle', 'running', 'waiting', 'error'];
+const WIDTHS: SidebarWidth[] = ['compact', 'standard', 'expanded'];
+const LONG_FACE = '(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧';
+
+export default function AsciimojiSettingsPreview() {
+  const preferences = usePreferences();
+  const { values } = useSettings();
+  const [family, setFamily] = useState<FaceFamily | null>(null);
+  const [width, setWidth] = useState<SidebarWidth | null>(null);
+  const effectiveFamily: FaceFamily = family ?? preferences.defaultFamily;
+  const effectiveWidth: SidebarWidth = width ?? preferences.sidebarWidth;
+  const sample = useMemo(() => generateFaceV2('preview', effectiveFamily), [effectiveFamily]);
+  const base = renderFace(sample);
+  const globalName = FACE_FAMILIES.find(item => item.id === preferences.defaultFamily)?.name ?? 'Classic';
+
+  return (
+    <div className="asciimoji-settings-preview" aria-label="Asciimoji appearance preview">
+      <div className="asciimoji-settings-preview-controls">
+        <label>Preview family
+          <select
+            aria-label="Preview face family"
+            value={effectiveFamily}
+            onChange={event => setFamily(event.target.value as FaceFamily)}
+            className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+          >
+            {FACE_FAMILIES.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </label>
+        <label>Preview sidebar width
+          <select
+            aria-label="Preview sidebar width"
+            value={effectiveWidth}
+            onChange={event => setWidth(event.target.value as SidebarWidth)}
+            className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+          >
+            {WIDTHS.map(item => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Live preview only — changing these controls never modifies saved settings.
+        Global default: {globalName}. Activity: {preferences.showActivity ? preferences.activityStyle : 'off'}.
+        {values === undefined ? ' Loading settings…' : ''}
+      </p>
+      <div className="asciimoji-settings-preview-grid">
+        {STATES.map(state => (
+          <div key={state} className="asciimoji-settings-preview-row">
+            <span className="text-xs capitalize text-muted-foreground">{state}</span>
+            <span title={base} className="font-mono text-sm">
+              <Face
+                face={base}
+                generated={sample}
+                state={preferences.showActivity ? state : undefined}
+                animation={preferences.animation}
+                useThemeColor={preferences.useThemeColor}
+                activityStyle={preferences.activityStyle}
+              />
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="asciimoji-settings-preview-row">
+        <span className="text-xs text-muted-foreground">Sidebar truncation ({effectiveWidth})</span>
+        <span title={LONG_FACE} className="font-mono text-xs">
+          <Face
+            face={LONG_FACE}
+            animation="off"
+            useThemeColor={preferences.useThemeColor}
+            activityStyle={preferences.activityStyle}
+            sidebar
+            sidebarWidth={effectiveWidth}
+          />
+        </span>
+      </div>
+    </div>
+  );
+}

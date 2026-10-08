@@ -16,17 +16,18 @@ afterEach(cleanup);
 async function mount(settings: Record<string, string | boolean> = {}) {
   const app = await loadPluginApp(appDefinition);
   let face = ':-)';
-  let projectFamily: FaceFamily = 'classic';
+  let projectOverride: FaceFamily | null = null;
+  const effectiveFamily = () => projectOverride ?? 'classic';
   const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false, ...settings },
     rpc: {
-      getProjectDefault: () => ({ family: projectFamily }),
+      getProjectDefault: () => ({ family: effectiveFamily(), origin: (projectOverride ? 'project' : 'global') as 'project' | 'global', override: projectOverride }),
       previews: ({ threadId }) => ['classic', 'bear', 'robot', 'cat', 'minimal'].map(family => ({ family: family as FaceFamily, face: renderFace(generateFace(threadId, undefined, family as FaceFamily)) })),
       getLibrary: () => ({ favorites: [], recent: [] }),
       favorite: ({ face, expressions, saved }) => ({ favorites: saved ? [{ face, ...(expressions ? { expressions } : {}) }] : [], recent: [] }),
-      vary: ({ threadId }) => { const generated = generateFace(threadId, undefined, projectFamily); face = renderFace(generated); return { threadId, face, custom: true, projectId: 'proj_personal', source: 'generated' as const, generated }; },
-      setProjectDefault: ({ family }) => { projectFamily = family; return { family }; },
-      generate: ({ threadId, family }) => { const generated = generateFace(threadId, undefined, family ?? projectFamily); face = renderFace(generated); return { threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const, generated }; },
+      vary: ({ threadId }) => { const generated = generateFace(threadId, undefined, effectiveFamily()); face = renderFace(generated); return { threadId, face, custom: true, projectId: 'proj_personal', source: 'generated' as const, generated }; },
+      setProjectDefault: ({ family }: { family: FaceFamily | null }) => { projectOverride = family; return { family: effectiveFamily(), origin: (projectOverride ? 'project' : 'global') as 'project' | 'global', override: projectOverride }; },
+      generate: ({ threadId, family }) => { const generated = generateFace(threadId, undefined, family ?? effectiveFamily()); face = renderFace(generated); return { threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const, generated }; },
       activity: ({ threadIds }) => threadIds.map(threadId => ({ threadId, state: 'running' as const })),
       getMany: ({ threadIds }) => threadIds.map(threadId => ({ threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const })),
       get: ({ threadId }: {threadId:string}) => ({ threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const }),
@@ -250,7 +251,7 @@ test('generated identities and activity are automatic without opt-in settings', 
     const button = await screen.findByRole('button', { name: `Change thread asciimoji: ${renderFace(generated)}, waiting` });
     expect(button.textContent).toBe(renderFace(generated, { state: 'waiting' }));
     fireEvent.click(button);
-    const reset = await screen.findByRole('button', { name: 'Follow project default' });
+    const reset = await screen.findByRole('button', { name: 'Use automatic face' });
     expect((reset as HTMLButtonElement).disabled).toBe(true);
   } finally { slot.lifecycle.unmount(); }
 });
@@ -292,7 +293,7 @@ test('a rejected project default save keeps the previous selection and shows an 
     settings: { showActivity: false },
     rpc: {
       get: () => ({ threadId: 'thr_one', face: ':-)', custom: false, projectId: 'proj_personal', source: 'automatic' as const }),
-      getProjectDefault: () => ({ family: 'bear' }),
+      getProjectDefault: () => ({ family: 'bear' as const, origin: 'project' as const, override: 'bear' as const }),
       setProjectDefault: () => { throw new Error('Save failed'); },
     },
   });
@@ -367,7 +368,7 @@ test('favorites update live and reuse their activity expressions', async () => {
         return { favorites, recent: [] };
       },
       set: (input: unknown) => { applied = input; return { threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', custom: true, ...input as {face:string} }; },
-      getProjectDefault: () => ({ family: 'classic' }),
+      getProjectDefault: () => ({ family: 'classic' as const, origin: 'global' as const, override: null }),
       previews: () => [],
     },
   });
@@ -416,11 +417,11 @@ test('sidebar opens the shared picker with a hidden header, outside the host lin
     settings: { showSidebar: true, showHeader: false, showActivity: false, animation: 'off' },
     rpc: {
       getMany: () => [identity], get: () => identity,
-      previews: () => [], getLibrary: () => ({ favorites: [], recent: [] }), getProjectDefault: () => ({ family: 'classic' }),
+      previews: () => [], getLibrary: () => ({ favorites: [], recent: [] }), getProjectDefault: () => ({ family: 'classic' as const, origin: 'global' as const, override: null }),
     },
   });
   try {
-    const button = await screen.findByRole('button', { name: 'Change sidebar asciimoji for thr_one' });
+    const button = await screen.findByRole('button', { name: 'Change sidebar asciimoji :-) for thr_one' });
     expect(row.contains(button)).toBe(false);
     fireEvent.click(button);
     expect(navigate).not.toHaveBeenCalled();
@@ -457,7 +458,7 @@ test('header and 100 sidebar faces share a read and refresh only the changed thr
     },
   });
   try {
-    await screen.findByRole('button', { name: 'Change sidebar asciimoji for thr_row_99, running' });
+    await screen.findByRole('button', { name: 'Change sidebar asciimoji :-) for thr_row_99, running' });
     expect(activity).toHaveBeenCalledTimes(1);
     expect(new Set((activity.mock.calls[0]![0] as {threadIds:string[]}).threadIds).size).toBe(100);
     await header.behavior.emitRealtime('activity', { threadId: 'thr_one' });
@@ -534,7 +535,7 @@ test('favorites with identical text remain distinguishable', async () => {
       getLibrary: () => ({ favorites: [{ face: ':-)' }, { face: ':-)', expressions: { running: ':D' } }], recent: [] }),
       favorite: () => ({ favorites: [], recent: [] }),
       set: (input: unknown) => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', custom: true, ...input as { face: string } }),
-      getProjectDefault: () => ({ family: 'classic' }),
+      getProjectDefault: () => ({ family: 'classic' as const, origin: 'global' as const, override: null }),
       previews: () => [],
     },
   });
@@ -553,7 +554,7 @@ test('legacy classic faces are not relabeled with the project default family', a
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false }, rpc: {
       get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'generated' as const, face: '(•ω•)', custom: true, generated: legacy }),
-      getProjectDefault: () => ({ family: 'robot' as const }),
+      getProjectDefault: () => ({ family: 'robot' as const, origin: 'project' as const, override: 'robot' as const }),
       previews: () => [],
       getLibrary: () => ({ favorites: [], recent: [] }),
     },
@@ -561,5 +562,79 @@ test('legacy classic faces are not relabeled with the project default family', a
   try {
     fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: (•ω•)' }));
     expect(await screen.findByText('Saved for this thread: Classic')).toBeTruthy();
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('sidebar width applies via data attributes and truncates long faces', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const row = document.createElement('div');
+  row.dataset.sidebarThreadShortcutTarget = '';
+  row.dataset.sidebarThreadId = 'thr_one';
+  row.textContent = 'Title';
+  document.body.append(row);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  for (const width of ['compact', 'standard', 'expanded'] as const) {
+    const slot = renderSlot(app.appOverlays[0]!, {}, {
+      settings: { showSidebar: true, showActivity: false, animation: 'off', sidebarWidth: width },
+      rpc: { getMany: () => [{ threadId: 'thr_one', face: '(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧', custom: true, projectId: 'proj_personal', source: 'custom' as const }] },
+    });
+    try {
+      await waitFor(() => expect(row.querySelector(`[data-sidebar-width="${width}"]`)).toBeTruthy());
+      const face = row.querySelector('[data-sidebar-width]')!;
+      expect(face.getAttribute('title')).toBe('(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧');
+      expect(face.getAttribute('aria-label')).toBe('(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧');
+    } finally { slot.lifecycle.unmount(); }
+  }
+  await scripts.lifecycle.dispose();
+  row.remove();
+});
+
+test('activity markers mode keeps static faces with status symbols', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: true, activityStyle: 'markers', animation: 'off' }, rpc: {
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':)', custom: true, expressions: { waiting: ':?' } }),
+      activity: () => [{ threadId: 'thr_one', state: 'waiting' }],
+    },
+  });
+  try {
+    const button = await screen.findByRole('button', { name: 'Change thread asciimoji: :), waiting' });
+    expect(button.textContent).toBe(':)?');
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('project picker offers global default and labels automatic scope', async () => {
+  const { slot } = await mount();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    fireEvent.click(await screen.findByText('Project defaults'));
+    const select = await screen.findByRole('combobox', { name: 'Project default face family' });
+    await waitFor(() => expect((select as HTMLSelectElement).disabled).toBe(false));
+    expect(screen.getByRole('option', { name: /Use global default/ })).toBeTruthy();
+    fireEvent.change(select, { target: { value: 'global' } });
+    await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'setProjectDefault' && (call.input as {family:string|null}).family === null)).toBe(true));
+    expect(await screen.findByRole('button', { name: 'Use automatic face' })).toBeTruthy();
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('settings preview renders states without backend RPC', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const rpc = vi.fn(() => { throw new Error('preview must not call RPC'); });
+  const slot = renderSlot(app.settingsSections[0]!, {}, {
+    settings: { showActivity: true, activityStyle: 'expressions', sidebarWidth: 'compact', animation: 'off', defaultFamily: 'bear' },
+    rpc: {},
+  });
+  try {
+    const preview = await screen.findByLabelText('Asciimoji appearance preview');
+    expect(preview.textContent).toContain('idle');
+    expect(preview.textContent).toContain('running');
+    expect(preview.textContent).toContain('Sidebar truncation');
+    const family = screen.getByRole('combobox', { name: 'Preview face family' });
+    fireEvent.change(family, { target: { value: 'cat' } });
+    expect((family as HTMLSelectElement).value).toBe('cat');
+    expect(rpc).not.toHaveBeenCalled(); // preview uses local generation only
+    const width = screen.getByRole('combobox', { name: 'Preview sidebar width' });
+    fireEvent.change(width, { target: { value: 'expanded' } });
+    await waitFor(() => expect(document.querySelector('[data-sidebar-width="expanded"]')).toBeTruthy());
   } finally { slot.lifecycle.unmount(); }
 });

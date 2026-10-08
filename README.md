@@ -79,27 +79,50 @@ when saving or reusing a favorite. Clear all three and Save to return to markers
 Open **Settings → Plugins → Asciimoji** to configure:
 
 - **Show face in thread header** — enabled by default.
-- **Show faces in sidebar** — disabled by default. Faces open the same picker even
+- **Show faces beside threads in sidebar** — disabled by default. Faces open the same picker even
   with the header disabled.
-- **Use theme color** — disabled by default. Follows the theme's primary color.
-- **Show activity expressions** — enabled by default.
+- **Show activity state** — enabled by default.
+- **Activity presentation** — Expressions (default) or Markers.
+- **Use theme accent color** — disabled by default. Follows the theme's primary color.
 - **Animation style** — Off, Subtle (default), or Playful.
+- **Sidebar face width** — Compact (6ch), Standard (default, 10ch), or Expanded (16ch).
+- **Default face family** — Classic (default), Bears, Robots, Cats, or Minimal. Global fallback
+  for projects without an explicit override.
+
+Configuration precedence is Thread override → Project override → Global default.
+Thread overrides are saved custom, preset, or generated choices. Project overrides are set in
+the picker or with `project-default`. Missing project keys inherit the global family;
+an explicit Classic override stays Classic when the global default changes. Choose
+**Use global default** in the picker (or `project-default inherit`) to delete the
+project override. **Use automatic face** removes the thread override.
+
+The **Appearance preview** section below the native settings shows header and sidebar faces
+for idle, running, waiting, and error states, plus sidebar truncation. Family and width
+preview controls are local and never modify saved settings. It works without a selected
+project or thread, respects the active theme and reduced-motion preferences, supports
+keyboard navigation, and makes no backend RPC calls.
 
 Subtle animates face changes and hover on working threads; Playful adds a gentle
 bob while a thread is working. Idle, waiting, and error faces stay still. Motion pauses
 in hidden windows and respects system reduced-motion preferences. Settings
-update live. Long sidebar faces truncate; hover to see their complete saved text.
+update live and synchronize across windows. Long sidebar faces truncate according to
+the configured width; hover or assistive labels expose their complete saved text.
 
 ```sh
 bb plugin config asciimoji set showSidebar true
 bb plugin config asciimoji set animation playful
 bb plugin config asciimoji set useThemeColor true
 bb plugin config asciimoji set showActivity true
+bb plugin config asciimoji set activityStyle markers
+bb plugin config asciimoji set sidebarWidth expanded
+bb plugin config asciimoji set defaultFamily bear
 ```
 
-Activity expresses idle, running, waiting for input, and error. Generated faces
-change eyes; text choices use markers unless custom state expressions are saved.
-Off keeps activity expressions static. Running does not distinguish thinking
+Activity expresses idle, running, waiting for input, and error. With Expressions,
+generated faces change eyes and text choices use custom expressions with marker fallback;
+with Markers, all faces keep their static text plus a status marker (·, ?, !).
+Activity off shows only static base faces. Animation Off keeps static activity feedback.
+Running does not distinguish thinking
 from tool execution, and idle does not imply successful completion.
 
 Header, sidebar, and open pickers share activity reads in each window.
@@ -122,6 +145,8 @@ bb asciimoji favorite --remove
 bb asciimoji library --json
 bb asciimoji project-default
 bb asciimoji project-default robot
+bb asciimoji project-default inherit
+bb asciimoji project-default --json
 bb asciimoji reset
 bb asciimoji get --thread thr_example --json
 ```
@@ -132,8 +157,12 @@ Thread commands default to the current BB thread. Outside a thread, supply
 
 Generate without `--family` saves the current project family; Vary uses the
 current generated family, falling back to the project family for text choices.
-Reset follows the project default. Project-default without a family reads the
-target thread's project family. Library needs no thread context.
+Reset (Use automatic face) removes the thread override and follows global/project defaults.
+Project-default without a family reads the target thread's effective family with origin
+and override details. `project-default inherit` deletes the project override.
+`project-default classic` stores an explicit Classic override. JSON results retain the
+effective `family` field plus `origin` (global/project) and `override` (family or null).
+Library needs no thread context.
 
 Set replaces the base face and expression map; omitted expression options clear
 previous mappings. Favorite saves the current static face and custom mappings;

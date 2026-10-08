@@ -64,10 +64,13 @@ test('shuffle changes face, CLI updates and deletion clears saved face', async (
 test('settings persist across reload and bulk lookup is bounded', async () => {
   let { harness } = await host();
   try {
-    await harness.behavior.setSettings({ showHeader: false, showSidebar: true, useThemeColor: true, animation: 'playful' });
+    await harness.behavior.setSettings({ showHeader: false, showSidebar: true, useThemeColor: true, animation: 'playful', sidebarWidth: 'expanded', activityStyle: 'markers', defaultFamily: 'bear' });
     harness = (await harness.lifecycle.reload(plugin)).harness;
-    await harness.behavior.setSettings({ animation: 'off' });
+    await harness.behavior.setSettings({ animation: 'off', sidebarWidth: 'compact', activityStyle: 'expressions', defaultFamily: 'classic' });
     await assert.rejects(harness.behavior.setSettings({ animation: 'invalid' }));
+    await assert.rejects(harness.behavior.setSettings({ sidebarWidth: 'wide' }));
+    await assert.rejects(harness.behavior.setSettings({ activityStyle: 'blink' }));
+    await assert.rejects(harness.behavior.setSettings({ defaultFamily: 'invalid' }));
     const result = await harness.behavior.callRpc('getMany', { threadIds: [first, first, second, 'thr_missing'] });
     assert.deepEqual(result, [
       { threadId: first, projectId: 'project-1', source: 'automatic', face: automaticFace(first), custom: false, generated: automatic(first) },
@@ -176,7 +179,7 @@ test('project defaults follow authoritative project membership; overrides and le
     await harness.behavior.callRpc('set', { threadId: 'thr_custom', face: ':-)' });
     await harness.behavior.callRpc('generate', { threadId: 'thr_pinned', family: 'cat' });
     await harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'bear' });
-    assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: second }), { family: 'bear' });
+    assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: second }), { family: 'bear', origin: 'project', override: 'bear' });
     assert.deepEqual((await read(second)).generated, automatic(second, 'bear'));
     assert.equal((await read(second)).custom, false);
     assert.equal((await read(first)).face, defaultFace(first));
@@ -200,6 +203,17 @@ test('project defaults follow authoritative project membership; overrides and le
     await assert.rejects(harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'cat', projectId: 'proj_other' }));
     await harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'classic' });
     assert.equal((await read(second)).face, automaticFace(second));
+    assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: second }), { family: 'classic', origin: 'project', override: 'classic' });
+    // Explicit Classic survives a global change; inherited projects follow it.
+    await harness.behavior.setSettings({ defaultFamily: 'robot' });
+    assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: second }), { family: 'classic', origin: 'project', override: 'classic' });
+    assert.equal((await read(second)).generated.family, 'classic');
+    assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: 'thr_other_project' }), { family: 'robot', origin: 'global', override: null });
+    assert.equal((await read('thr_other_project')).generated.family, 'robot');
+    // Inheriting deletes the override and follows the global default.
+    assert.deepEqual(await harness.behavior.callRpc('setProjectDefault', { threadId: second, family: null }), { family: 'robot', origin: 'global', override: null });
+    assert.equal((await read(second)).generated.family, 'robot');
+    await harness.behavior.setSettings({ defaultFamily: 'classic' });
   } finally { await harness.lifecycle.dispose(); }
 });
 
@@ -207,11 +221,13 @@ test('family and project default CLI commands validate, read and save choices', 
   const { harness } = await host();
   try {
     const run = (args: string[]) => harness.behavior.runCli([...args, '--thread', first, '--json']);
-    assert.deepEqual(JSON.parse((await run(['project-default'])).stdout!), { family: 'classic' });
-    assert.deepEqual(JSON.parse((await run(['project-default', 'robot'])).stdout!), { family: 'robot' });
+    assert.deepEqual(JSON.parse((await run(['project-default'])).stdout!), { family: 'classic', origin: 'global', override: null });
+    assert.deepEqual(JSON.parse((await run(['project-default', 'robot'])).stdout!), { family: 'robot', origin: 'project', override: 'robot' });
     const generated = JSON.parse((await run(['generate', '--family', 'cat'])).stdout!);
     assert.equal(generated.generated.family, 'cat');
     assert.equal(JSON.parse((await run(['reset'])).stdout!).generated.family, 'robot');
+    assert.deepEqual(JSON.parse((await run(['project-default', 'classic'])).stdout!), { family: 'classic', origin: 'project', override: 'classic' });
+    assert.deepEqual(JSON.parse((await run(['project-default', 'inherit'])).stdout!), { family: 'classic', origin: 'global', override: null });
     assert.notEqual((await run(['project-default', 'bad'])).exitCode, 0);
     assert.notEqual((await run(['generate', '--family', 'bad'])).exitCode, 0);
   } finally { await harness.lifecycle.dispose(); }
@@ -362,4 +378,34 @@ test('parent changes invalidate automatic children but stop at pinned threads', 
     assert.equal(second?.threadId, 'thr_parent');
     assert.deepEqual(second?.affectedThreadIds ?? [], [], 'pinned child blocks descendant invalidation');
   } finally { await harness.lifecycle.dispose(); }
+});
+
+test('global defaults apply only to inherited projects and publish realtime invalidation', async () => {
+  const { harness } = await host();
+  try {
+    assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: first }), { family: 'classic', origin: 'global', override: null });
+    await harness.behavior.setSettings({ defaultFamily: 'cat' });
+    assert.ok(harness.inspection.realtimeSignals.some(signal => signal.channel === 'changed' && (signal.payload as {globalDefault?:string}).globalDefault === 'cat'));
+    assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: first }), { family: 'cat', origin: 'global', override: null });
+    assert.equal(((await harness.behavior.callRpc('get', { threadId: first })) as {generated:{family:string}}).generated.family, 'cat');
+    await harness.behavior.callRpc('setProjectDefault', { threadId: first, family: 'classic' });
+    await harness.behavior.setSettings({ defaultFamily: 'robot' });
+    assert.equal(((await harness.behavior.callRpc('get', { threadId: first })) as {generated:{family:string}}).generated.family, 'classic');
+    await harness.behavior.setSettings({ defaultFamily: 'classic' });
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test('centralized activity presentation keeps geometry across modes', async () => {
+  const { resolveFaceDisplay } = await import('./faces.ts');
+  const generated = generateFaceV2('thr_demo', 'classic');
+  const base = renderFace(generated);
+  assert.deepEqual(resolveFaceDisplay(base, { generated }), { displayed: base, marker: '' });
+  assert.deepEqual(resolveFaceDisplay(base, { generated, state: 'running', activityStyle: 'markers' }), { displayed: base, marker: '·' });
+  assert.deepEqual(resolveFaceDisplay(base, { generated, state: 'waiting', activityStyle: 'markers' }), { displayed: base, marker: '?' });
+  assert.deepEqual(resolveFaceDisplay(base, { generated, state: 'error', activityStyle: 'markers' }), { displayed: base, marker: '!' });
+  const running = resolveFaceDisplay(base, { generated, state: 'running' });
+  assert.equal([...running.displayed].length, [...base].length);
+  assert.deepEqual(resolveFaceDisplay(':)', { state: 'running' }), { displayed: ':)', marker: '·' });
+  assert.deepEqual(resolveFaceDisplay(':)', { state: 'waiting', expressions: { waiting: ':?' } }), { displayed: ':?', marker: '' });
+  assert.deepEqual(resolveFaceDisplay(':)', { state: 'waiting', expressions: { waiting: ':?' }, activityStyle: 'markers' }), { displayed: ':)', marker: '?' });
 });

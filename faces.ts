@@ -36,6 +36,29 @@ export function defaultFace(threadId: string, parentThreadId?: string | null): s
 
 export type FaceState = 'idle' | 'running' | 'waiting' | 'error';
 export type FaceExpressions = Partial<Record<Exclude<FaceState, 'idle'>, string>>;
+export type ActivityStyle = 'expressions' | 'markers';
+export type SidebarWidth = 'compact' | 'standard' | 'expanded';
+export const SIDEBAR_WIDTHS: Record<SidebarWidth, string> = { compact: '6ch', standard: '10ch', expanded: '16ch' };
+export function activityMarker(state: FaceState): string {
+  return state === 'running' ? '·' : state === 'waiting' ? '?' : state === 'error' ? '!' : '';
+}
+export interface ResolvedFaceDisplay { displayed: string; marker: string; }
+/** Centralize activity presentation so headers, sidebar faces, and picker previews agree.
+ * - Activity off (state undefined): static base face.
+ * - Markers: static base face plus a status marker.
+ * - Expressions: generated state expression, or custom expression with marker fallback. */
+export function resolveFaceDisplay(face: string, options: {
+  generated?: GeneratedFace; expressions?: FaceExpressions; state?: FaceState;
+  activityStyle?: ActivityStyle; elapsed?: number; animation?: boolean;
+} = {}): ResolvedFaceDisplay {
+  const { generated, expressions, state, activityStyle = 'expressions', elapsed = 0, animation = false } = options;
+  if (!state || state === 'idle') return { displayed: face, marker: '' };
+  if (activityStyle === 'markers') return { displayed: face, marker: activityMarker(state) };
+  if (generated) return { displayed: renderFace(generated, { state, elapsed, animation }), marker: '' };
+  const custom = expressions?.[state];
+  if (custom) return { displayed: custom, marker: '' };
+  return { displayed: face, marker: activityMarker(state) };
+}
 export const countFaceCharacters = (value: string) => [...value].length;
 /** Shared by the editor and RPC boundary; limits count Unicode code points. */
 export function faceValidationError(value: string): string | null {
