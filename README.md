@@ -2,9 +2,10 @@
 
 Give every thread a familiar face: `ʕ•ᴥ•ʔ`, `(⌐■_■)`, or your own.
 
-Each thread automatically gets a stable generated asciimoji in its header. Click it to choose
-from 12 presets, write a custom face, pick a surprise, choose a generated face family, or restore the project default.
-Saved choices persist across sessions and sync between connected windows.
+Each thread automatically gets a stable generated face. Click it in the header,
+or enable sidebar faces and click one there, to choose a family, preset, favorite,
+recent choice, or custom face. Saved choices sync between connected windows and
+persist across sessions. Titles and agent prompts are unaffected.
 
 ## Install
 
@@ -17,99 +18,131 @@ bb plugin build
 bb plugin install .
 ```
 
+## Choose a face
+
+The picker shows whether a thread is **Following project** or **Saved for this thread**.
+
+- **Keep a family** saves the displayed preview as this thread's generated choice.
+- **Try another variation** saves a visibly different face in the current generated
+  family. For presets/custom faces, it uses the project's family.
+- **Follow project default** removes the thread override. The automatic face follows
+  future project-family changes.
+- **Surprise me** chooses a different one of the 12 named presets.
+- **Custom face** previews your draft as you type, including at header and sidebar
+  sizes. Save applies the draft; closing the picker discards unsaved edits.
+
+Custom faces allow up to 40 Unicode code points on one visible line. Controls,
+invisible formatting characters, and entirely invisible faces are rejected.
+The character counter and validation match the server.
+
+### Families and project defaults
+
+Families are **Classic**, **Bears**, **Robots**, **Cats**, and **Minimal**.
+New generated faces include varied mouths and accessories so siblings remain
+distinguishable. Family previews are computed by the backend with the same
+parent information used when saving.
+
+Automatic children in the same generated family use their parent's actual eyes,
+including across multiple generations. A parent with a custom/preset face or a
+different generated family does not supply eyes. Saved generated faces retain
+the eyes they had when saved, even if the parent later changes.
+
+Expand **Project defaults** in the picker to change the family for all automatic
+faces in that project, including new threads. Saved choices remain as they are.
+
+Existing version-1 saved generated choices keep their original generator and
+appearance. New saved generated choices store a version-2 identity and seed.
+Automatic faces use version 2; no migration overwrites existing saved choices.
+
+### Favorites and recent faces
+
+**Favorite current face** keeps reusable text and any custom activity expressions
+in the face library. Click a favorite to use it in another thread; remove it with
+the adjacent × control. Expand **Recent faces** to reuse previous choices.
+
+The plugin stores up to 50 favorites and the 20 most recent distinct choices.
+The library syncs across windows and survives reloads. Favoriting a generated
+face keeps its static text; reusing it creates a saved text choice with activity
+markers rather than a generated identity.
+
+### Custom activity expressions
+
+Expand **Custom activity expressions** to supply optional Running, Waiting,
+and Error faces. Choose **Preview activity** to inspect each state before saving.
+
+Blank states keep the base face and its activity marker. Expressions use the
+same validation as the base face. They persist with the thread and are preserved
+when saving or reusing a favorite. Clear all three and Save to return to markers.
+
 ## Settings
 
 Open **Settings → Plugins → Asciimoji** to configure:
 
 - **Show face in thread header** — enabled by default.
-- **Show faces in sidebar** — optional, disabled by default.
-- **Use theme color** — optional, disabled by default. Colors faces with your theme’s primary color.
-- **Show activity expressions** — enabled by default. Generated faces change expression with activity; presets and custom faces show a small activity marker.
+- **Show faces in sidebar** — disabled by default. Faces open the same picker even
+  with the header disabled.
+- **Use theme color** — disabled by default. Follows the theme's primary color.
+- **Show activity expressions** — enabled by default.
 - **Animation style** — Off, Subtle (default), or Playful.
 
-Subtle animates face changes and hover; Playful adds a gentle idle bob.
-Animations respect your system’s reduced-motion preference. Settings update
-live without reloading. Sidebar faces decorate the existing thread rows and
-sync with the header. Theme color applies to the header, picker, and sidebar
-and follows theme changes automatically. Hover a sidebar face to see the full text.
-
-You can also configure them from the shell:
+Subtle animates face changes and hover; Playful adds a gentle bob. Motion pauses
+in hidden windows and respects system reduced-motion preferences. Settings
+update live. Long sidebar faces truncate; hover to see their complete saved text.
 
 ```sh
-bb plugin config asciimoji set showActivity true
 bb plugin config asciimoji set showSidebar true
 bb plugin config asciimoji set animation playful
 bb plugin config asciimoji set useThemeColor true
+bb plugin config asciimoji set showActivity true
 ```
+
+Activity expresses idle, running, waiting for input, and error. Generated faces
+change eyes; text choices use markers unless custom state expressions are saved.
+Off keeps activity expressions static. Running does not distinguish thinking
+from tool execution, and idle does not imply successful completion.
+
+Header, sidebar, and open pickers share activity reads in each window.
+Notifications refresh only affected threads and coalesce into bounded batches;
+reconnection restores authoritative snapshots. CLI output always reports the
+saved base identity, not live activity.
 
 ## Commands
 
 ```sh
 bb asciimoji get
 bb asciimoji set 'ʕ•ᴥ•ʔ'
+bb asciimoji set ':-)' --running ':D' --waiting ':?' --error ':('
 bb asciimoji shuffle
 bb asciimoji generate
 bb asciimoji generate --family bear
+bb asciimoji vary
+bb asciimoji favorite
+bb asciimoji favorite --remove
+bb asciimoji library --json
 bb asciimoji project-default
 bb asciimoji project-default robot
 bb asciimoji reset
 bb asciimoji get --thread thr_example --json
 ```
 
-Commands default to the current bb thread. Outside a thread, supply `--thread`.
-Custom faces support Unicode and are limited to 40 characters on one visible
-line. Control characters are rejected. Presets can repeat across threads.
+Thread commands default to the current BB thread. Outside a thread, supply
+`--thread`. Add `--json` for structured output. Family IDs are `classic`,
+`bear`, `robot`, `cat`, and `minimal`.
 
-### Face families and project defaults
+Generate without `--family` saves the current project family; Vary uses the
+current generated family, falling back to the project family for text choices.
+Reset follows the project default. Project-default without a family reads the
+target thread's project family. Library needs no thread context.
 
-Choose **Classic**, **Bears**, **Robots**, **Cats**, or **Minimal** in the thread
-picker. Each family generates stable variations from the thread ID and supports
-activity expressions. Child threads in the same family share their parent's eyes.
-Classic keeps the original mixed-style generator.
+Set replaces the base face and expression map; omitted expression options clear
+previous mappings. Favorite saves the current static face and custom mappings;
+`--remove` removes that exact combination. JSON identities include a `source`
+of `automatic`, `generated`, `preset`, or `custom`, plus `projectId`.
+The compatibility `custom` field continues to mean any explicit thread override.
 
-The picker's **Project default** selector sets the family for all automatic faces
-in that project, including existing threads and newly created ones. It defaults
-to Classic. Changes persist across reloads and sync to headers, sidebars, and
-pickers in connected windows.
-
-Selecting a family for a thread saves an override. Presets, custom text, and saved
-generated faces keep their identity when the project default changes. **Reset to
-default** removes the override so the thread follows its project's family again.
-Previously saved generated choices retain their Classic identity.
-
-From the shell, use `generate --family bear` for a thread override, or
-`project-default robot` to set its project's family. Family IDs are `classic`,
-`bear`, `robot`, `cat`, and `minimal`. `project-default` without a family reports
-the current default; `project-default classic` restores the original generator.
-These commands accept `--thread` and `--json` like the other commands. A project
-is resolved from the target thread.
-
-### Generated faces and activity
-
-Every thread automatically uses a generated face. The thread ID selects curated
-delimiters, eyes, and a mouth without model calls.
-Child threads in the same family inherit their parent's hash-selected eyes. Explicit generated selections are
-saved as a versioned choice. Automatic faces need no stored selection. Both share the same renderer in the header, picker,
-and sidebar. Saved presets and custom faces remain explicit overrides. Choose
-**Use generated face** or run `bb asciimoji generate` to replace an override;
-Reset restores the automatic generated face in the current project family. Generate without `--family` saves a face in the current project family.
-
-**Show activity expressions** is enabled by default and displays idle, running,
-waiting for user input, and error states. Running faces glance sideways; waiting faces use `?`
-eyes and errors use `x`. Idle faces blink when animation is enabled. Presets and
-custom text stay as saved and use a separate `·`, `?`, or `!` marker. These
-states reflect BB's reported thread activity; running does not distinguish
-thinking from tool execution, and idle does not imply successful completion.
-
-Expression frames retain five glyphs. A shared animation clock pauses in hidden
-windows and for reduced motion; **Off** keeps state expressions static. Activity
-refreshes on host events and reconnection. CLI reports return the static saved
-identity, while activity is ephemeral. The activity integration also uses BB's
-experimental thread-events listener to refresh after interaction resolution.
-
-Faces live in plugin-owned bb storage. Deleting a thread removes its saved
-face. Thread titles and agent prompts remain as you wrote them. No external
-service or account is required.
+Faces and the library live in plugin-owned BB storage. Deleting a thread removes
+its saved choice while reusable library entries remain. No external service,
+account, model call, or API key is required.
 
 ## Development
 
@@ -121,7 +154,12 @@ bb plugin dev
 ```
 
 The plugin uses the experimental thread-header and app-overlay slots. Sidebar
-faces use a content script and bb’s thread-row shortcut DOM attributes; rows
-without those attributes cannot be decorated. Compatibility depends on these
-extension points remaining available in bb. Backend RPC validates inputs and
-outputs; the frontend uses bb’s shared React runtime and vendored bb controls.
+faces use a content script and BB's thread-row shortcut attributes and title
+layout. Rows without those extension points cannot be decorated. Sidebar
+mutations are filtered and scans are coalesced; controls sit outside host links.
+Compatibility depends on these host extension points remaining available.
+
+Backend RPC validates inputs and outputs. The frontend uses BB's shared React
+runtime and vendored BB controls. Tests cover legacy compatibility, exact
+previews, multigeneration inheritance, library bounds, expressions, retries,
+sidebar access, and shared targeted activity reads.

@@ -1,29 +1,40 @@
 import { randomInt } from 'node:crypto';
 import { cliCommand, defineCli, defineRpcContract, type BbPluginApi } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
-import { FACES, FAMILY_IDS, generateFace, renderFace, type FaceFamily } from './faces.js';
+import { FACES, FAMILY_IDS, faceValidationError, generateFace, generateFaceV2, renderFace, type FaceFamily, type GeneratedFace } from './faces.js';
 
 const threadIdSchema = z.string().regex(/^thr_[a-zA-Z0-9_-]+$/).max(128);
-export const faceSchema = z.string().trim().min(1).max(40).refine(
-  value => !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value),
-  'Use a single visible line without control characters.',
-);
+export const faceSchema = z.string().refine(value => faceValidationError(value) === null,
+  'Use a visible face of at most 40 characters on one line, without control or formatting characters.').transform(value => value.trim());
 export const familySchema = z.enum(FAMILY_IDS);
 const projectDefaultSchema = z.object({ family: familySchema });
 const generatedSchema = z.object({
-  version: z.literal(1), family: familySchema.optional(), ears: z.tuple([z.string().length(1), z.string().length(1)]),
-  eyes: z.string().length(1), mouth: z.string().length(1), blinkOffset: z.number().int().min(0).max(3999),
+  version: z.union([z.literal(1), z.literal(2)]), family: familySchema.optional(), ears: z.tuple([z.string().length(1), z.string().length(1)]),
+  eyes: z.string().length(1), mouth: z.string().length(1), blinkOffset: z.number().int().min(0).max(3999), accessory: z.string().length(1).optional(),
 });
-const generatedChoice = z.object({ version: z.literal(1), kind: z.literal('generated'), family: familySchema.optional() }).strict();
+const legacyChoice = z.object({ version: z.literal(1), kind: z.literal('generated'), family: familySchema.optional() }).strict();
+const generatedChoice = z.object({ version: z.literal(2), kind: z.literal('generated'), seed: z.number().int().min(0).max(2147483647),
+  identity: generatedSchema.extend({ version: z.literal(2), family: familySchema }) }).strict();
+export const expressionsSchema = z.object({ running: faceSchema.optional(), waiting: faceSchema.optional(), error: faceSchema.optional() }).strict();
+const savedFaceSchema = z.object({ face: faceSchema, expressions: expressionsSchema.optional() }).strict();
+const customChoice = savedFaceSchema.extend({ version: z.literal(2), kind: z.literal('custom') }).strict();
+const librarySchema = z.object({ favorites: z.array(savedFaceSchema).max(50), recent: z.array(savedFaceSchema).max(20) });
 const stateSchema = z.enum(['idle', 'running', 'waiting', 'error']);
-const identitySchema = z.object({ threadId: threadIdSchema, face: faceSchema, custom: z.boolean(), generated: generatedSchema.optional() });
+const identitySchema = z.object({ threadId: threadIdSchema, projectId: z.string(), face: faceSchema, custom: z.boolean(),
+  source: z.enum(['automatic', 'generated', 'preset', 'custom']), generated: generatedSchema.optional(), expressions: expressionsSchema.optional() });
+export type Identity = z.infer<typeof identitySchema>;
+export type LibraryFace = z.infer<typeof savedFaceSchema>;
 const threadInput = z.object({ threadId: threadIdSchema }).strict();
 export const rpcContract = defineRpcContract({
   get: { input: threadInput, output: identitySchema },
   getMany: { input: z.object({ threadIds: z.array(threadIdSchema).max(200) }).strict(), output: z.array(identitySchema) },
-  set: { input: threadInput.extend({ face: faceSchema }), output: identitySchema },
+  set: { input: threadInput.extend({ face: faceSchema, expressions: expressionsSchema.optional() }), output: identitySchema },
   shuffle: { input: threadInput, output: identitySchema },
   generate: { input: threadInput.extend({ family: familySchema.optional() }), output: identitySchema },
+  vary: { input: threadInput, output: identitySchema },
+  previews: { input: threadInput, output: z.array(z.object({ family: familySchema, face: faceSchema })) },
+  getLibrary: { input: z.object({}).strict(), output: librarySchema },
+  favorite: { input: savedFaceSchema.extend({ saved: z.boolean() }).strict(), output: librarySchema },
   activity: { input: z.object({ threadIds: z.array(threadIdSchema).max(200) }).strict(),
     output: z.array(z.object({ threadId: threadIdSchema, state: stateSchema })) },
   getProjectDefault: { input: threadInput, output: projectDefaultSchema },
@@ -56,22 +67,71 @@ export default function plugin(bb: BbPluginApi) {
     bb.realtime.publish('changed', { projectId: thread.projectId });
     return { family };
   }
-  async function get(threadId: string) {
+  async function buildIdentity(threadId: string, family: FaceFamily, seed = 0, ancestors = new Set<string>()): Promise<GeneratedFace> {
+    const thread = await bb.sdk.threads.get({ threadId });
+    let inheritedEyes: string | undefined;
+    if (thread.parentThreadId && !ancestors.has(thread.parentThreadId) && ancestors.size < 64) {
+      try {
+        const parent = await get(thread.parentThreadId, new Set([...ancestors, threadId]));
+        if (parent.generated && (parent.generated.family ?? 'classic') === family) inheritedEyes = parent.generated.eyes;
+      } catch { /* Missing parents do not make the child's face unavailable. */ }
+    }
+    return generateFaceV2(threadId, family, { seed, inheritedEyes });
+  }
+  async function get(threadId: string, ancestors = new Set<string>()): Promise<Identity> {
     const thread = await bb.sdk.threads.get({ threadId });
     const value = await bb.storage.kv.get(key(threadId));
     const stored = faceSchema.safeParse(value);
-    if (stored.success) return { threadId, face: stored.data, custom: true };
+    const custom = customChoice.safeParse(value);
+    const base = { threadId, projectId: thread.projectId };
+    if (stored.success || custom.success) {
+      const face = custom.success ? custom.data.face : stored.data!;
+      const expressions = custom.success ? custom.data.expressions : undefined;
+      return { ...base, face, custom: true,
+        source: !expressions && FACES.some(item => item.face === face) ? 'preset' : 'custom',
+        ...(expressions ? { expressions } : {}) };
+    }
     const choice = generatedChoice.safeParse(value);
-    const family = choice.success ? choice.data.family ?? 'classic' : await projectFamily(thread.projectId);
-    const generated = generateFace(threadId, thread.parentThreadId, family);
-    return { threadId, face: renderFace(generated), custom: choice.success, generated };
+    const legacy = legacyChoice.safeParse(value);
+    const generated = choice.success ? choice.data.identity : legacy.success
+      ? generateFace(threadId, thread.parentThreadId, legacy.data.family ?? 'classic')
+      : await buildIdentity(threadId, await projectFamily(thread.projectId), 0, ancestors);
+    return { ...base, face: renderFace(generated), custom: choice.success || legacy.success,
+      source: choice.success || legacy.success ? 'generated' : 'automatic', generated };
   }
-  async function set(threadId: string, value: string) {
+  let libraryQueue: Promise<unknown> = Promise.resolve();
+  const entryKey = (entry: LibraryFace) => JSON.stringify([entry.face, entry.expressions?.running, entry.expressions?.waiting, entry.expressions?.error]);
+  async function readLibrary() {
+    const stored = librarySchema.safeParse(await bb.storage.kv.get('library'));
+    return stored.success ? stored.data : { favorites: [], recent: [] };
+  }
+  function updateLibrary(update: (library: z.infer<typeof librarySchema>) => void) {
+    const operation = libraryQueue.then(async () => {
+      const library = await readLibrary();
+      update(library);
+      await bb.storage.kv.set('library', librarySchema.parse(library));
+      bb.realtime.publish('library', {});
+      return library;
+    });
+    libraryQueue = operation.catch(() => {});
+    return operation;
+  }
+  const remember = (entry: LibraryFace) => updateLibrary(library => {
+    library.recent = [entry, ...library.recent.filter(item => entryKey(item) !== entryKey(entry))].slice(0, 20);
+  });
+  const favorite = (entry: LibraryFace, saved: boolean) => updateLibrary(library => {
+    const remaining = library.favorites.filter(item => entryKey(item) !== entryKey(entry));
+    if (saved && remaining.length >= 50) throw new Error('Your library holds 50 favorites. Remove one before adding another.');
+    library.favorites = saved ? [entry, ...remaining] : remaining;
+  });
+  async function set(threadId: string, value: string, expressions?: z.infer<typeof expressionsSchema>) {
     await bb.sdk.threads.get({ threadId });
-    const face = faceSchema.parse(value);
-    await bb.storage.kv.set(key(threadId), face);
+    const entry = savedFaceSchema.parse({ face: value, ...(expressions ? { expressions } : {}) });
+    const mapped = Object.values(entry.expressions ?? {}).some(Boolean);
+    await bb.storage.kv.set(key(threadId), mapped ? { version: 2, kind: 'custom', ...entry } : entry.face);
     bb.realtime.publish('changed', { threadId });
-    return { threadId, face, custom: true };
+    await remember(mapped ? entry : { face: entry.face });
+    return get(threadId);
   }
   async function reset(threadId: string) {
     await bb.sdk.threads.get({ threadId });
@@ -87,9 +147,24 @@ export default function plugin(bb: BbPluginApi) {
   async function generate(threadId: string, family?: FaceFamily) {
     const thread = await bb.sdk.threads.get({ threadId });
     const selected = family ?? await projectFamily(thread.projectId);
-    await bb.storage.kv.set(key(threadId), { version: 1, kind: 'generated', family: selected });
+    return saveGenerated(threadId, await buildIdentity(threadId, selected), 0);
+  }
+  async function saveGenerated(threadId: string, identity: GeneratedFace, seed: number) {
+    await bb.storage.kv.set(key(threadId), generatedChoice.parse({ version: 2, kind: 'generated', identity, seed }));
     bb.realtime.publish('changed', { threadId });
+    await remember({ face: renderFace(identity) });
     return get(threadId);
+  }
+  async function vary(threadId: string) {
+    const current = await get(threadId);
+    const family = current.generated?.family ?? (current.generated ? 'classic' : await projectFamily(current.projectId));
+    let seed = randomInt(2147483000);
+    for (let attempt = 0; attempt < 256; attempt++) {
+      seed = (seed + 1) % 2147483648;
+      const identity = await buildIdentity(threadId, family, seed);
+      if (renderFace(identity) !== current.face) return saveGenerated(threadId, identity, seed);
+    }
+    throw new Error('Could not find another variation. Try again.');
   }
   // Read authoritative state instead of retaining ephemeral activity across reloads.
   async function activity(threadId: string) {
@@ -105,6 +180,10 @@ export default function plugin(bb: BbPluginApi) {
     bb.events.on(event, ({ thread }) => bb.realtime.publish('activity', { threadId: thread.id }));
   }
   bb.rpc.register(rpcContract, {
+    vary: ({ threadId }) => vary(threadId),
+    previews: async ({ threadId }) => Promise.all(FAMILY_IDS.map(async family => ({ family, face: renderFace(await buildIdentity(threadId, family)) }))),
+    getLibrary: async () => { await libraryQueue; return readLibrary(); },
+    favorite: ({ face, expressions, saved }) => favorite(savedFaceSchema.parse({ face, ...(expressions ? { expressions } : {}) }), saved),
     generate: ({ threadId, family }) => generate(threadId, family),
     getProjectDefault: ({ threadId }) => getProjectDefault(threadId),
     setProjectDefault: ({ threadId, family }) => setProjectDefault(threadId, family),
@@ -114,10 +193,10 @@ export default function plugin(bb: BbPluginApi) {
     },
     get: ({ threadId }) => get(threadId),
     getMany: async ({ threadIds }) => {
-      const results = await Promise.allSettled([...new Set(threadIds)].map(get));
+      const results = await Promise.allSettled([...new Set(threadIds)].map(id => get(id)));
       return results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
     },
-    set: ({ threadId, face }) => set(threadId, face),
+    set: ({ threadId, face, expressions }) => set(threadId, face, expressions),
     shuffle: ({ threadId }) => shuffle(threadId),
     reset: ({ threadId }) => reset(threadId),
   });
@@ -128,7 +207,10 @@ export default function plugin(bb: BbPluginApi) {
     thread: { type: 'string', description: 'Thread id; defaults to the current thread' },
     json: { type: 'boolean', description: 'Emit JSON' },
   } as const;
-  const target = (value: string | undefined, current: string | undefined) => threadIdSchema.parse(value ?? current);
+  const target = (value: string | undefined, current: string | undefined) => {
+    if (!value && !current) throw new Error('Supply --thread thr_... when running outside a BB thread.');
+    return threadIdSchema.parse(value ?? current);
+  };
   const reply = (value: Awaited<ReturnType<typeof get>>, json: boolean | undefined) => ({
     exitCode: 0, stdout: json ? JSON.stringify(value) : `${value.face}  ${value.threadId}`,
   });
@@ -138,16 +220,36 @@ export default function plugin(bb: BbPluginApi) {
       get: cliCommand({ summary: 'Show a thread’s face', options, async run(input, ctx) {
         return reply(await get(target(input.options.thread, ctx.threadId)), input.options.json);
       } }),
-      set: cliCommand({ summary: 'Save a custom face', options,
+      set: cliCommand({ summary: 'Save a custom face and optional activity expressions',
+        options: { ...options, running: { type: 'string', description: 'Face while running' }, waiting: { type: 'string', description: 'Face while waiting' }, error: { type: 'string', description: 'Face on error' } },
         positionals: [{ name: 'face', description: 'Quoted asciimoji', required: true }],
         async run(input, ctx) {
-          return reply(await set(target(input.options.thread, ctx.threadId), input.positionals.face), input.options.json);
+          const expressions = expressionsSchema.parse({
+            ...(input.options.running !== undefined ? { running: input.options.running } : {}),
+            ...(input.options.waiting !== undefined ? { waiting: input.options.waiting } : {}),
+            ...(input.options.error !== undefined ? { error: input.options.error } : {}),
+          });
+          return reply(await set(target(input.options.thread, ctx.threadId), input.positionals.face, expressions), input.options.json);
         } }),
       shuffle: cliCommand({ summary: 'Choose a different preset', options, async run(input, ctx) {
         return reply(await shuffle(target(input.options.thread, ctx.threadId)), input.options.json);
       } }),
       generate: cliCommand({ summary: 'Save a deterministic generated face', options: { ...options, family: { type: 'string', description: 'classic, bear, robot, cat, or minimal' } }, async run(input, ctx) {
         return reply(await generate(target(input.options.thread, ctx.threadId), input.options.family === undefined ? undefined : familySchema.parse(input.options.family)), input.options.json);
+      } }),
+      vary: cliCommand({ summary: 'Save another variation in the current family', options, async run(input, ctx) {
+        return reply(await vary(target(input.options.thread, ctx.threadId)), input.options.json);
+      } }),
+      library: cliCommand({ summary: 'List favorite and recent faces', options: { json: options.json }, async run(input) {
+        await libraryQueue;
+        const library = await readLibrary();
+        return { exitCode: 0, stdout: input.options.json ? JSON.stringify(library)
+          : 'Favorites:\n' + library.favorites.map(item => item.face).join('\n') + '\nRecent:\n' + library.recent.map(item => item.face).join('\n') };
+      } }),
+      favorite: cliCommand({ summary: 'Save or remove the current face in favorites', options: { ...options, remove: { type: 'boolean', description: 'Remove this favorite' } }, async run(input, ctx) {
+        const identity = await get(target(input.options.thread, ctx.threadId));
+        const library = await favorite({ face: identity.face, ...(identity.expressions ? { expressions: identity.expressions } : {}) }, !input.options.remove);
+        return { exitCode: 0, stdout: input.options.json ? JSON.stringify(library) : input.options.remove ? 'Favorite removed' : 'Favorite saved' };
       } }),
       'project-default': cliCommand({ summary: 'Show or set this thread’s project face family', options,
         positionals: [{ name: 'family', description: 'classic, bear, robot, cat, or minimal', required: false }],

@@ -35,13 +35,24 @@ export function defaultFace(threadId: string, parentThreadId?: string | null): s
 }
 
 export type FaceState = 'idle' | 'running' | 'waiting' | 'error';
+export type FaceExpressions = Partial<Record<Exclude<FaceState, 'idle'>, string>>;
+export const countFaceCharacters = (value: string) => [...value].length;
+/** Shared by the editor and RPC boundary; limits count Unicode code points. */
+export function faceValidationError(value: string): string | null {
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value)) return 'Use one line without control or invisible formatting characters.';
+  const trimmed = value.trim();
+  if (!trimmed || /^[\s\p{M}\u2800\u3164\u115f\u1160\uffa0]+$/u.test(trimmed)) return 'Enter a visible face.';
+  if (countFaceCharacters(trimmed) > 40) return 'Use 40 characters or fewer.';
+  return null;
+}
 export interface GeneratedFace {
-  version: 1;
+  version: 1 | 2;
   family?: FaceFamily;
   ears: [string, string];
   eyes: string;
   mouth: string;
   blinkOffset: number;
+  accessory?: string;
 }
 
 function identityHash(id: string): number {
@@ -69,7 +80,30 @@ export function generateFace(threadId: string, parentThreadId?: string | null, f
   };
 }
 
-/** All expressions retain five glyphs; time is supplied by the caller. */
+/** V1 above is frozen for legacy saved choices. V2 saves its complete identity. */
+export function generateFaceV2(threadId: string, family: FaceFamily = 'classic', options: {
+  seed?: number; inheritedEyes?: string;
+} = {}): GeneratedFace {
+  const hash = identityHash(`${threadId}:${options.seed ?? 0}:v2`);
+  const parts = family === 'classic' ? undefined : familyParts[family];
+  const ears = parts?.ears ?? [['(', ')'], ['ʕ', 'ʔ'], ['[', ']'], ['{', '}']][hash % 4]!;
+  const eyes = parts?.eyes ?? ['•', '^', 'o', '¬'];
+  const mouths = family === 'bear' ? ['ᴥ', 'ω', 'ᴗ', 'ᵕ', '‿', 'ﻌ']
+    : family === 'robot' ? ['_', '−', '=', '‿', 'ᴗ', '﹏']
+    : family === 'cat' ? ['ω', 'ﻌ', 'ᵕ', 'ᴗ', '﹏', '‿']
+    : ['_', '‿', 'ᴗ', 'ω', 'ᵕ', '﹏'];
+  const accessories = family === 'minimal' ? ['·', '˙', '°', '˖', '˳', '⁺', '⁎', '∙']
+    : ['✧', '♡', '☆', '♪', '✿', '☼', '✦', '⁎'];
+  return {
+    version: 2, family, ears: [ears[0], ears[1]],
+    eyes: options.inheritedEyes ?? eyes[(hash >>> 4) % eyes.length]!,
+    mouth: mouths[(hash >>> 8) % mouths.length]!,
+    accessory: accessories[(hash >>> 16) % accessories.length]!,
+    blinkOffset: (hash >>> 12) % 4000,
+  };
+}
+
+/** Each identity retains its glyph count across expressions; time is supplied by the caller. */
 export function renderFace(identity: GeneratedFace, options: {
   state?: FaceState; elapsed?: number; animation?: boolean;
 } = {}): string {
@@ -79,5 +113,5 @@ export function renderFace(identity: GeneratedFace, options: {
   else if (state === 'waiting') eyes = '?';
   else if (state === 'running') eyes = animation && Math.floor(elapsed / 750) % 2 ? '>' : '<';
   else if (animation && (elapsed + identity.blinkOffset) % 6000 < 250) eyes = '-';
-  return `${identity.ears[0]}${eyes}${identity.mouth}${eyes}${identity.ears[1]}`;
+  return `${identity.ears[0]}${eyes}${identity.mouth}${eyes}${identity.ears[1]}${identity.accessory ?? ''}`;
 }

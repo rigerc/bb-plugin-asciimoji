@@ -21,14 +21,18 @@ async function mount(settings: Record<string, string | boolean> = {}) {
     settings: { showActivity: false, ...settings },
     rpc: {
       getProjectDefault: () => ({ family: projectFamily }),
+      previews: ({ threadId }) => ['classic', 'bear', 'robot', 'cat', 'minimal'].map(family => ({ family: family as FaceFamily, face: renderFace(generateFace(threadId, undefined, family as FaceFamily)) })),
+      getLibrary: () => ({ favorites: [], recent: [] }),
+      favorite: ({ face, expressions, saved }) => ({ favorites: saved ? [{ face, ...(expressions ? { expressions } : {}) }] : [], recent: [] }),
+      vary: ({ threadId }) => { const generated = generateFace(threadId, undefined, projectFamily); face = renderFace(generated); return { threadId, face, custom: true, projectId: 'proj_personal', source: 'generated' as const, generated }; },
       setProjectDefault: ({ family }) => { projectFamily = family; return { family }; },
-      generate: ({ threadId, family }) => { const generated = generateFace(threadId, undefined, family ?? projectFamily); face = renderFace(generated); return { threadId, face, custom: true, generated }; },
+      generate: ({ threadId, family }) => { const generated = generateFace(threadId, undefined, family ?? projectFamily); face = renderFace(generated); return { threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const, generated }; },
       activity: ({ threadIds }) => threadIds.map(threadId => ({ threadId, state: 'running' as const })),
-      getMany: ({ threadIds }) => threadIds.map(threadId => ({ threadId, face, custom: true })),
-      get: ({ threadId }: {threadId:string}) => ({ threadId, face, custom: true }),
-      set: ({ threadId, face: next }: {threadId:string;face:string}) => { face = next; return { threadId, face, custom: true }; },
-      reset: ({ threadId }: {threadId:string}) => { face = '[o_o]'; return { threadId, face, custom: false }; },
-      shuffle: ({ threadId }: {threadId:string}) => { face = 'ʕ•ᴥ•ʔ'; return { threadId, face, custom: true }; },
+      getMany: ({ threadIds }) => threadIds.map(threadId => ({ threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const })),
+      get: ({ threadId }: {threadId:string}) => ({ threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const }),
+      set: ({ threadId, face: next }: {threadId:string;face:string}) => { face = next; return { threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const }; },
+      reset: ({ threadId }: {threadId:string}) => { face = '[o_o]'; return { threadId, face, custom: false, projectId: 'proj_personal', source: 'automatic' as const }; },
+      shuffle: ({ threadId }: {threadId:string}) => { face = 'ʕ•ᴥ•ʔ'; return { threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const }; },
     },
   });
   await screen.findByRole('button', { name: settings.showActivity ? 'Change thread asciimoji: :-), running' : 'Change thread asciimoji: :-)' });
@@ -74,7 +78,7 @@ test('display preferences are applied to the header and picker faces', async () 
 test('header visibility is configurable', async () => {
   const app = await loadPluginApp(appDefinition);
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
-    settings: { showHeader: false }, rpc: { get: () => ({ threadId: 'thr_one', face: ':-)', custom: false }) },
+    settings: { showHeader: false }, rpc: { get: () => ({ threadId: 'thr_one', face: ':-)', custom: false, projectId: 'proj_personal', source: 'automatic' as const }) },
   });
   expect(screen.queryByRole('button', { name: /Change thread asciimoji/ })).toBeNull();
   slot.lifecycle.unmount();
@@ -82,7 +86,7 @@ test('header visibility is configurable', async () => {
 
 test('optional sidebar faces follow updates and clean up on disposal', async () => {
   const app = await loadPluginApp(appDefinition);
-  const row = document.createElement('a');
+  const row = document.createElement('div');
   row.dataset.sidebarThreadShortcutTarget = '';
   row.dataset.sidebarThreadId = 'thr_one';
   row.textContent = 'Original title';
@@ -91,7 +95,7 @@ test('optional sidebar faces follow updates and clean up on disposal', async () 
   let face = ':-)';
   const slot = renderSlot(app.appOverlays[0]!, {}, {
     settings: { showSidebar: true, animation: 'playful', useThemeColor: true },
-    rpc: { getMany: () => [{ threadId: 'thr_one', face, custom: true }] },
+    rpc: { getMany: () => [{ threadId: 'thr_one', face, custom: true, projectId: 'proj_personal', source: 'custom' as const }] },
   });
   await waitFor(() => expect(row.textContent).toBe(':-)Original title'));
   expect(row.querySelector('[data-motion="playful"]')).toBeTruthy();
@@ -113,7 +117,7 @@ test('optional sidebar faces follow updates and clean up on disposal', async () 
 
 test('sidebar is off by default', async () => {
   const app = await loadPluginApp(appDefinition);
-  const row = document.createElement('a');
+  const row = document.createElement('div');
   row.dataset.sidebarThreadShortcutTarget = '';
   row.dataset.sidebarThreadId = 'thr_one';
   document.body.append(row);
@@ -135,7 +139,7 @@ test('sidebar face reserves space beside the visible title instead of inside BB�
   const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
   const slot = renderSlot(app.appOverlays[0]!, {}, {
     settings: { showSidebar: true, animation: 'off' },
-    rpc: { getMany: () => [{ threadId: 'thr_one', face: ':-)', custom: true }] },
+    rpc: { getMany: () => [{ threadId: 'thr_one', face: ':-)', custom: true, projectId: 'proj_personal', source: 'custom' as const }] },
   });
   try {
     await waitFor(() => expect(wrapper.textContent).toBe(':-)Original title'));
@@ -160,7 +164,7 @@ test('sidebar face reserves space beside the visible title instead of inside BB�
 test('generated picker choice renders activity without changing the saved base face', async () => {
   const { slot } = await mount({ showActivity: true, animation: 'off' });
   fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :-), running' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Use generated face' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Keep Classic family' }));
   const generated = generateFace('thr_one');
   const button = await screen.findByRole('button', { name: `Change thread asciimoji: ${renderFace(generated)}, running` });
   expect(button.textContent).toBe(renderFace(generated, { state: 'running' }));
@@ -173,7 +177,7 @@ test('activity follows host notifications without changing custom text', async (
   let state: 'running' | 'waiting' | 'idle' = 'running';
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: true, animation: 'off' }, rpc: {
-      get: () => ({ threadId: 'thr_one', face: ':-)', custom: true }),
+      get: () => ({ threadId: 'thr_one', face: ':-)', custom: true, projectId: 'proj_personal', source: 'custom' as const }),
       activity: () => [{ threadId: 'thr_one', state }],
     },
   });
@@ -238,7 +242,7 @@ test('generated identities and activity are automatic without opt-in settings', 
   const generated = generateFace('thr_one');
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     rpc: {
-      get: () => ({ threadId: 'thr_one', face: renderFace(generated), custom: false, generated }),
+      get: () => ({ threadId: 'thr_one', face: renderFace(generated), custom: false, projectId: 'proj_personal', source: 'automatic' as const, generated }),
       activity: () => [{ threadId: 'thr_one', state: 'waiting' }],
     },
   });
@@ -246,7 +250,7 @@ test('generated identities and activity are automatic without opt-in settings', 
     const button = await screen.findByRole('button', { name: `Change thread asciimoji: ${renderFace(generated)}, waiting` });
     expect(button.textContent).toBe(renderFace(generated, { state: 'waiting' }));
     fireEvent.click(button);
-    const reset = await screen.findByRole('button', { name: 'Reset to default' });
+    const reset = await screen.findByRole('button', { name: 'Follow project default' });
     expect((reset as HTMLButtonElement).disabled).toBe(true);
   } finally { slot.lifecycle.unmount(); }
 });
@@ -256,7 +260,7 @@ test('family selection saves a generated thread override', async () => {
   const { slot } = await mount();
   try {
     fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Use Bears family' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep Bears family' }));
     const expected = renderFace(generateFace('thr_one', undefined, 'bear'));
     await screen.findByRole('button', { name: `Change thread asciimoji: ${expected}` });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -268,6 +272,7 @@ test('project default can be changed in the picker and project signals refresh f
   const { slot, update } = await mount();
   try {
     fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    fireEvent.click(await screen.findByText('Project defaults'));
     const select = await screen.findByRole('combobox', { name: 'Project default face family' });
     await waitFor(() => expect((select as HTMLSelectElement).disabled).toBe(false));
     fireEvent.change(select, { target: { value: 'robot' } });
@@ -286,18 +291,182 @@ test('a rejected project default save keeps the previous selection and shows an 
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false },
     rpc: {
-      get: () => ({ threadId: 'thr_one', face: ':-)', custom: false }),
+      get: () => ({ threadId: 'thr_one', face: ':-)', custom: false, projectId: 'proj_personal', source: 'automatic' as const }),
       getProjectDefault: () => ({ family: 'bear' }),
       setProjectDefault: () => { throw new Error('Save failed'); },
     },
   });
   try {
     fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    fireEvent.click(await screen.findByText('Project defaults'));
     const select = await screen.findByRole('combobox', { name: 'Project default face family' });
     await waitFor(() => expect((select as HTMLSelectElement).value).toBe('bear'));
     fireEvent.change(select, { target: { value: 'cat' } });
-    expect((await screen.findByRole('alert')).textContent).toContain('Save failed');
+    expect(await screen.findByText(/Could not update the project default.*Save failed/)).toBeTruthy();
     expect((select as HTMLSelectElement).value).toBe('bear');
     expect((select as HTMLSelectElement).disabled).toBe(false);
   } finally { slot.lifecycle.unmount(); }
+});
+
+
+test('draft validation and activity previews agree with the saved custom expression map', async () => {
+  const { slot } = await mount({ animation: 'off' });
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    const input = await screen.findByRole('textbox', { name: 'Custom asciimoji' });
+    fireEvent.change(input, { target: { value: '\u2800' } });
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Enter a visible face/)).toBeTruthy();
+    fireEvent.change(input, { target: { value: '😀'.repeat(40) } });
+    expect(screen.getByText('40/40 characters')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.change(input, { target: { value: '😀'.repeat(41) } });
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(input, { target: { value: ':)' } });
+    fireEvent.click(screen.getByText('Custom activity expressions'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'waiting expression' }), { target: { value: ':?' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Preview activity' }), { target: { value: 'waiting' } });
+    expect(screen.getByLabelText('Draft asciimoji preview').textContent).toBe(':?');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const call = slot.inspection.rpcCalls.find(call => call.method === 'set')!;
+    expect(call.input).toEqual({ threadId: 'thr_one', face: ':)', expressions: { waiting: ':?' } });
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('custom activity mappings render in the header and fall back to markers for unmapped states', async () => {
+  const app = await loadPluginApp(appDefinition);
+  let state: 'running' | 'waiting' = 'waiting';
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { animation: 'off' }, rpc: {
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':)', custom: true, expressions: { waiting: ':?' } }),
+      activity: () => [{ threadId: 'thr_one', state }],
+    },
+  });
+  try {
+    const button = await screen.findByRole('button', { name: 'Change thread asciimoji: :), waiting' });
+    expect(button.textContent).toBe(':?');
+    state = 'running';
+    await slot.behavior.emitRealtime('activity', { threadId: 'thr_one' });
+    await screen.findByRole('button', { name: 'Change thread asciimoji: :), running' });
+    expect(button.textContent).toBe(':)·');
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('favorites update live and reuse their activity expressions', async () => {
+  const app = await loadPluginApp(appDefinition);
+  let favorites = [{ face: ':)', expressions: { waiting: ':?' } }];
+  let applied: unknown;
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false }, rpc: {
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':D', custom: true }),
+      getLibrary: () => ({ favorites, recent: [{ face: ':-)' }] }),
+      favorite: (input: unknown) => {
+        const { face, saved } = input as {face:string;saved:boolean};
+        favorites = saved ? [...favorites, { face, expressions: { waiting: ':?' } }] : favorites.filter(item => item.face !== face);
+        return { favorites, recent: [] };
+      },
+      set: (input: unknown) => { applied = input; return { threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', custom: true, ...input as {face:string} }; },
+      getProjectDefault: () => ({ family: 'classic' }),
+      previews: () => [],
+    },
+  });
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :D' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Favorite current face' }));
+    await screen.findByRole('button', { name: 'Reuse favorite: :D' });
+    favorites = [{ face: ':-)', expressions: { waiting: ':?' } }];
+    await slot.behavior.emitRealtime('library', {});
+    expect(await screen.findByRole('button', { name: 'Reuse favorite: :-)' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Reuse favorite: :D' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Reuse favorite: :-)' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(applied).toEqual({ threadId: 'thr_one', face: ':-)', expressions: { waiting: ':?' } });
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('failed loading exposes retry without displaying an invented identity', async () => {
+  const app = await loadPluginApp(appDefinition);
+  let failed = true;
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false }, rpc: {
+      get: () => { if (failed) throw new Error('Offline'); return { threadId: 'thr_one', projectId: 'proj_personal', source: 'preset', face: ':-)', custom: true }; },
+    },
+  });
+  try {
+    const retry = await screen.findByRole('button', { name: 'Retry thread asciimoji' });
+    expect(screen.queryByRole('button', { name: /Change thread asciimoji/ })).toBeNull();
+    failed = false;
+    fireEvent.click(retry);
+    await screen.findByRole('button', { name: 'Change thread asciimoji: :-)' });
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('sidebar opens the shared picker with a hidden header, outside the host link', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = '<a href="/threads/thr_one" data-sidebar-thread-shortcut-target data-sidebar-thread-id="thr_one">Original title</a>';
+  document.body.append(wrapper);
+  const row = wrapper.querySelector('a')!;
+  const navigate = vi.fn();
+  row.addEventListener('click', navigate);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const identity = { threadId: 'thr_one', projectId: 'proj_personal', source: 'preset', face: ':-)', custom: true };
+  const slot = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true, showHeader: false, showActivity: false, animation: 'off' },
+    rpc: {
+      getMany: () => [identity], get: () => identity,
+      previews: () => [], getLibrary: () => ({ favorites: [], recent: [] }), getProjectDefault: () => ({ family: 'classic' }),
+    },
+  });
+  try {
+    const button = await screen.findByRole('button', { name: 'Change sidebar asciimoji for thr_one' });
+    expect(row.contains(button)).toBe(false);
+    fireEvent.click(button);
+    expect(navigate).not.toHaveBeenCalled();
+    await screen.findByRole('dialog');
+    expect(screen.queryByRole('button', { name: 'Change thread asciimoji: :-)' })).toBeNull();
+    expect(screen.getByLabelText('Current asciimoji').textContent).toBe(':-)');
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(button));
+  } finally { slot.lifecycle.unmount(); await scripts.lifecycle.dispose(); wrapper.remove(); }
+});
+
+test('header and 100 sidebar faces share a read and refresh only the changed thread', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const wrapper = document.createElement('div');
+  const ids = Array.from({ length: 100 }, (_, index) => index ? 'thr_row_' + index : 'thr_one');
+  for (const id of ids) {
+    const row = document.createElement('div');
+    row.dataset.sidebarThreadShortcutTarget = '';
+    row.dataset.sidebarThreadId = id;
+    row.textContent = id;
+    wrapper.append(row);
+  }
+  document.body.append(wrapper);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const activity = vi.fn((input: unknown) => (input as {threadIds:string[]}).threadIds.map(threadId => ({ threadId, state: 'running' })));
+  const identity = (threadId: string) => ({ threadId, projectId: 'proj_personal', source: 'preset', face: ':-)', custom: true });
+  const header = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { animation: 'off' }, rpc: { get: (input: unknown) => identity((input as {threadId:string}).threadId), activity },
+  });
+  const sidebar = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true, animation: 'off' }, rpc: {
+      getMany: (input: unknown) => (input as {threadIds:string[]}).threadIds.map(identity), activity,
+    },
+  });
+  try {
+    await screen.findByRole('button', { name: 'Change sidebar asciimoji for thr_row_99, running' });
+    expect(activity).toHaveBeenCalledTimes(1);
+    expect(new Set((activity.mock.calls[0]![0] as {threadIds:string[]}).threadIds).size).toBe(100);
+    await header.behavior.emitRealtime('activity', { threadId: 'thr_one' });
+    await sidebar.behavior.emitRealtime('activity', { threadId: 'thr_one' });
+    await waitFor(() => expect(activity).toHaveBeenCalledTimes(2));
+    expect(activity.mock.calls[1]![0]).toEqual({ threadIds: ['thr_one'] });
+    await header.behavior.setRealtimeConnectionState('reconnecting');
+    await header.behavior.setRealtimeConnectionState('connected');
+    await waitFor(() => expect(activity).toHaveBeenCalledTimes(3));
+    expect(activity.mock.calls[2]![0]).toEqual({ threadIds: ['thr_one'] });
+  } finally { header.lifecycle.unmount(); sidebar.lifecycle.unmount(); await scripts.lifecycle.dispose(); wrapper.remove(); }
 });

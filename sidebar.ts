@@ -21,9 +21,16 @@ function publish(next: readonly Target[]) {
 
 export function mountSidebar({ signal }: PluginContentScriptContext) {
   const owned = new Map<HTMLElement, Target>();
+  const rowSelector = '[data-sidebar-thread-shortcut-target][data-sidebar-thread-id]';
+  let containers: HTMLElement[] = [];
+  let scheduled: ReturnType<typeof setTimeout> | undefined;
+  const visibility = () => { document.documentElement.dataset.asciimojiHidden = String(document.hidden); };
+  visibility();
+  document.addEventListener('visibilitychange', visibility);
   function clear() {
     for (const target of owned.values()) target.element.remove();
     owned.clear();
+    containers = [];
     if (targets.length) publish([]);
   }
   function placement(row: HTMLElement) {
@@ -32,6 +39,8 @@ export function mountSidebar({ signal }: PluginContentScriptContext) {
     if (title?.parentElement && !row.contains(title)) return { parent: title.parentElement, before: title };
     // Leave BB's inline rename editor undecorated.
     if (row.hasAttribute('data-sidebar-rename-anchor') || getComputedStyle(row).position === 'absolute') return null;
+    // A picker button must never be nested inside the host's link/button.
+    if (row.matches('a, button') && row.parentElement) return { parent: row.parentElement, before: row };
     return { parent: row, before: null };
   }
   function place(element: HTMLElement, location: NonNullable<ReturnType<typeof placement>>) {
@@ -43,7 +52,11 @@ export function mountSidebar({ signal }: PluginContentScriptContext) {
   }
   function scan() {
     if (signal.aborted || !enabled) return;
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-sidebar-thread-shortcut-target][data-sidebar-thread-id]'));
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(rowSelector));
+    containers = [...new Set(rows.flatMap(row => {
+      const parent = row.parentElement;
+      return parent && parent !== document.body ? [parent] : [];
+    }))];
     const present = new Set(rows);
     let changed = false;
     for (const [row, target] of owned) {
@@ -69,16 +82,39 @@ export function mountSidebar({ signal }: PluginContentScriptContext) {
     }
     if (changed) publish([...owned.values()]);
   }
-  const observer = new MutationObserver(scan);
+  const observer = new MutationObserver(records => {
+    const relevant = records.some(record => {
+      if (record.type === 'attributes') return true;
+      const target = record.target instanceof Element ? record.target : record.target.parentElement;
+      if (target?.closest('[data-asciimoji-slot]')) return false;
+      const nodes = [...Array.from(record.addedNodes), ...Array.from(record.removedNodes)];
+      if (nodes.some(node => node instanceof Element && (node.matches(rowSelector) || node.querySelector(rowSelector)))) return true;
+      if (target && containers.some(container => container.contains(target))) return true;
+      return [...owned].some(([row, slot]) => row === target || (target && row.contains(target)) ||
+        (slot.element.parentElement !== document.body && !!target && !!slot.element.parentElement?.contains(target)) ||
+        nodes.some(node => node === row || node.contains(row)));
+    });
+    if (relevant && !scheduled) scheduled = setTimeout(() => { scheduled = undefined; scan(); }, 16);
+  });
   configure = value => {
     observer.disconnect();
+    if (scheduled) clearTimeout(scheduled);
+    scheduled = undefined;
     if (value && !signal.aborted) {
       scan();
-      observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-sidebar-thread-id', 'data-sidebar-thread-shortcut-target'] });
+      observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-sidebar-thread-id', 'data-sidebar-thread-shortcut-target', 'data-sidebar-rename-anchor'] });
     } else clear();
   };
   configure(enabled);
-  const dispose = () => { observer.disconnect(); configure = undefined; clear(); };
+  const dispose = () => {
+    observer.disconnect();
+    if (scheduled) clearTimeout(scheduled);
+    scheduled = undefined;
+    configure = undefined;
+    document.removeEventListener('visibilitychange', visibility);
+    delete document.documentElement.dataset.asciimojiHidden;
+    clear();
+  };
   signal.addEventListener('abort', dispose, { once: true });
   return () => { signal.removeEventListener('abort', dispose); dispose(); };
 }

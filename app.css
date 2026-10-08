@@ -8,3 +8,6 @@ button:hover .asciimoji-face[data-motion="subtle"], button:hover .asciimoji-face
 @keyframes asciimoji-wave { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-8deg); } 75% { transform: rotate(8deg); } }
 @media (prefers-reduced-motion: reduce) { .asciimoji-face[data-motion], button:hover .asciimoji-face[data-motion] { animation: none; } }
 .asciimoji-activity { display: inline-block; width: 1ch; margin-left: .3ch; text-align: center; }
+.asciimoji-sidebar-control { position: relative; z-index: 1; pointer-events: auto; min-height: 24px; min-width: 24px; }
+[data-asciimoji-hidden="true"] .asciimoji-face { animation-play-state: paused; }
+.asciimoji-preview > .asciimoji-face { max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
