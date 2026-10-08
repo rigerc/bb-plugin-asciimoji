@@ -22,18 +22,18 @@ async function mount(settings: Record<string, string | boolean> = {}) {
     settings: { showActivity: false, ...settings },
     rpc: {
       getProjectDefault: () => ({ family: effectiveFamily(), origin: (projectOverride ? 'project' : 'global') as 'project' | 'global', override: projectOverride }),
-      previews: ({ threadId }) => ['classic', 'bear', 'robot', 'cat', 'minimal'].map(family => ({ family: family as FaceFamily, face: renderFace(generateFace(threadId, undefined, family as FaceFamily)) })),
+      previews: ({ threadId }) => ['classic', 'bear', 'robot', 'cat', 'minimal'].map(family => ({ family: family as FaceFamily, face: renderFace(generateFace(threadId, family as FaceFamily)) })),
       getLibrary: () => ({ favorites: [], recent: [] }),
       favorite: ({ face, expressions, saved }) => ({ favorites: saved ? [{ face, ...(expressions ? { expressions } : {}) }] : [], recent: [] }),
-      vary: ({ threadId }) => { const generated = generateFace(threadId, undefined, effectiveFamily()); face = renderFace(generated); return { threadId, face, custom: true, projectId: 'proj_personal', source: 'generated' as const, generated }; },
+      vary: ({ threadId }) => { const generated = generateFace(threadId, effectiveFamily()); face = renderFace(generated); return { threadId, face, projectId: 'proj_personal', source: 'generated' as const, generated }; },
       setProjectDefault: ({ family }: { family: FaceFamily | null }) => { projectOverride = family; return { family: effectiveFamily(), origin: (projectOverride ? 'project' : 'global') as 'project' | 'global', override: projectOverride }; },
-      generate: ({ threadId, family }) => { const generated = generateFace(threadId, undefined, family ?? effectiveFamily()); face = renderFace(generated); return { threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const, generated }; },
+      generate: ({ threadId, family }) => { const generated = generateFace(threadId, family ?? effectiveFamily()); face = renderFace(generated); return { threadId, face, projectId: 'proj_personal', source: 'custom' as const, generated }; },
       activity: ({ threadIds }) => threadIds.map(threadId => ({ threadId, state: 'running' as const })),
-      getMany: ({ threadIds }) => threadIds.map(threadId => ({ threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const })),
-      get: ({ threadId }: {threadId:string}) => ({ threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const }),
-      set: ({ threadId, face: next }: {threadId:string;face:string}) => { face = next; return { threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const }; },
-      reset: ({ threadId }: {threadId:string}) => { face = '[o_o]'; return { threadId, face, custom: false, projectId: 'proj_personal', source: 'automatic' as const }; },
-      shuffle: ({ threadId }: {threadId:string}) => { face = 'ʕ•ᴥ•ʔ'; return { threadId, face, custom: true, projectId: 'proj_personal', source: 'custom' as const }; },
+      getMany: ({ threadIds }) => threadIds.map(threadId => ({ threadId, face, projectId: 'proj_personal', source: 'custom' as const })),
+      get: ({ threadId }: {threadId:string}) => ({ threadId, face, projectId: 'proj_personal', source: 'custom' as const }),
+      set: ({ threadId, face: next }: {threadId:string;face:string}) => { face = next; return { threadId, face, projectId: 'proj_personal', source: 'custom' as const }; },
+      reset: ({ threadId }: {threadId:string}) => { face = '[o_o]'; return { threadId, face, projectId: 'proj_personal', source: 'automatic' as const }; },
+      shuffle: ({ threadId }: {threadId:string}) => { face = 'ʕ•ᴥ•ʔ'; return { threadId, face, projectId: 'proj_personal', source: 'custom' as const }; },
     },
   });
   await screen.findByRole('button', { name: settings.showActivity ? 'Change thread asciimoji: :-), running' : 'Change thread asciimoji: :-)' });
@@ -79,7 +79,7 @@ test('display preferences are applied to the header and picker faces', async () 
 test('header visibility is configurable', async () => {
   const app = await loadPluginApp(appDefinition);
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
-    settings: { showHeader: false }, rpc: { get: () => ({ threadId: 'thr_one', face: ':-)', custom: false, projectId: 'proj_personal', source: 'automatic' as const }) },
+    settings: { showHeader: false }, rpc: { get: () => ({ threadId: 'thr_one', face: ':-)', projectId: 'proj_personal', source: 'automatic' as const }) },
   });
   expect(screen.queryByRole('button', { name: /Change thread asciimoji/ })).toBeNull();
   slot.lifecycle.unmount();
@@ -96,7 +96,7 @@ test('optional sidebar faces follow updates and clean up on disposal', async () 
   let face = ':-)';
   const slot = renderSlot(app.appOverlays[0]!, {}, {
     settings: { showSidebar: true, animation: 'playful', useThemeColor: true },
-    rpc: { getMany: () => [{ threadId: 'thr_one', face, custom: true, projectId: 'proj_personal', source: 'custom' as const }] },
+    rpc: { getMany: () => [{ threadId: 'thr_one', face, projectId: 'proj_personal', source: 'custom' as const }] },
   });
   await waitFor(() => expect(row.textContent).toBe(':-)Original title'));
   expect(row.querySelector('[data-motion="playful"]')).toBeTruthy();
@@ -114,6 +114,83 @@ test('optional sidebar faces follow updates and clean up on disposal', async () 
   expect(row.textContent).toBe('Original title');
   expect(document.querySelector('[data-asciimoji-slot]')).toBeNull();
   row.remove(); addedRow.remove();
+});
+
+test('sidebar falls back to an id-bearing title row when the shortcut attribute is missing', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const row = document.createElement('div');
+  row.dataset.sidebarThreadId = 'thr_one';
+  row.innerHTML = '<span class="bb-thread-title">Fallback title</span>';
+  document.body.append(row);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const slot = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true, showActivity: false },
+    rpc: { getMany: () => [{ threadId: 'thr_one', face: 'ʕ•ᴥ•ʔ', projectId: 'proj_personal', source: 'preset' as const }] },
+  });
+  try {
+    await waitFor(() => expect(row.textContent).toBe('ʕ•ᴥ•ʔFallback title'));
+    const title = row.querySelector('.bb-thread-title')!;
+    expect(row.querySelector('[data-asciimoji-slot]')?.nextSibling).toBe(title);
+  } finally {
+    slot.lifecycle.unmount();
+    await scripts.lifecycle.dispose();
+    expect(row.querySelector('[data-asciimoji-slot]')).toBeNull();
+    row.remove();
+  }
+});
+
+test('fallback title wrapped by a host link is decorated outside the link', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const wrapper = document.createElement('div');
+  wrapper.style.display = 'flex';
+  wrapper.innerHTML = '<a href="/threads/thr_one" data-sidebar-thread-id="thr_one"><span class="bb-thread-title">Linked title</span></a>';
+  document.body.append(wrapper);
+  const link = wrapper.querySelector('a')!;
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const slot = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true, showActivity: false },
+    rpc: { getMany: () => [{ threadId: 'thr_one', face: ':-)', projectId: 'proj_personal', source: 'preset' as const }] },
+  });
+  try {
+    const face = await screen.findByRole('button', { name: 'Change sidebar asciimoji :-) for thr_one' });
+    expect(link.contains(face)).toBe(false);
+    expect(face.closest('[data-asciimoji-slot]')?.nextSibling).toBe(link);
+    expect(wrapper.textContent).toBe(':-)Linked title');
+  } finally { slot.lifecycle.unmount(); await scripts.lifecycle.dispose(); wrapper.remove(); }
+});
+
+test('nested fallback and shortcut rows decorate the shortcut only once', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = '<div data-sidebar-thread-id="thr_one"><a data-sidebar-thread-id="thr_one" data-sidebar-thread-shortcut-target href="/threads/thr_one"><span class="bb-thread-title">Nested title</span></a></div>';
+  document.body.append(wrapper);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const slot = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true, showActivity: false },
+    rpc: { getMany: () => [{ threadId: 'thr_one', face: ':)', projectId: 'proj_personal', source: 'preset' as const }] },
+  });
+  try {
+    await screen.findByRole('button', { name: 'Change sidebar asciimoji :) for thr_one' });
+    expect(wrapper.querySelectorAll('[data-asciimoji-slot]')).toHaveLength(1);
+  } finally { slot.lifecycle.unmount(); await scripts.lifecycle.dispose(); wrapper.remove(); }
+});
+
+test('unknown sidebar layouts are ignored instead of inserting unsafe controls', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const row = document.createElement('a');
+  row.href = '/threads/thr_one';
+  row.dataset.sidebarThreadId = 'thr_one';
+  row.textContent = 'Unknown host layout';
+  document.body.append(row);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const slot = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true },
+    rpc: { getMany: () => { throw new Error('Unknown rows must not be queried'); } },
+  });
+  try {
+    expect(row.querySelector('[data-asciimoji-slot]')).toBeNull();
+    expect(row.textContent).toBe('Unknown host layout');
+  } finally { slot.lifecycle.unmount(); await scripts.lifecycle.dispose(); row.remove(); }
 });
 
 test('sidebar is off by default', async () => {
@@ -140,7 +217,7 @@ test('sidebar face reserves space beside the visible title instead of inside BB�
   const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
   const slot = renderSlot(app.appOverlays[0]!, {}, {
     settings: { showSidebar: true, animation: 'off' },
-    rpc: { getMany: () => [{ threadId: 'thr_one', face: ':-)', custom: true, projectId: 'proj_personal', source: 'custom' as const }] },
+    rpc: { getMany: () => [{ threadId: 'thr_one', face: ':-)', projectId: 'proj_personal', source: 'custom' as const }] },
   });
   try {
     await waitFor(() => expect(wrapper.textContent).toBe(':-)Original title'));
@@ -178,7 +255,7 @@ test('activity follows host notifications without changing custom text', async (
   let state: 'running' | 'waiting' | 'idle' = 'running';
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: true, animation: 'off' }, rpc: {
-      get: () => ({ threadId: 'thr_one', face: ':-)', custom: true, projectId: 'proj_personal', source: 'custom' as const }),
+      get: () => ({ threadId: 'thr_one', face: ':-)', projectId: 'proj_personal', source: 'custom' as const }),
       activity: () => [{ threadId: 'thr_one', state }],
     },
   });
@@ -243,7 +320,7 @@ test('generated identities and activity are automatic without opt-in settings', 
   const generated = generateFace('thr_one');
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     rpc: {
-      get: () => ({ threadId: 'thr_one', face: renderFace(generated), custom: false, projectId: 'proj_personal', source: 'automatic' as const, generated }),
+      get: () => ({ threadId: 'thr_one', face: renderFace(generated), projectId: 'proj_personal', source: 'automatic' as const, generated }),
       activity: () => [{ threadId: 'thr_one', state: 'waiting' }],
     },
   });
@@ -262,7 +339,7 @@ test('family selection saves a generated thread override', async () => {
   try {
     fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Keep Bears family' }));
-    const expected = renderFace(generateFace('thr_one', undefined, 'bear'));
+    const expected = renderFace(generateFace('thr_one', 'bear'));
     await screen.findByRole('button', { name: `Change thread asciimoji: ${expected}` });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(slot.inspection.rpcCalls.some(call => call.method === 'generate' && (call.input as {family:string}).family === 'bear')).toBe(true);
@@ -292,7 +369,7 @@ test('a rejected project default save keeps the previous selection and shows an 
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false },
     rpc: {
-      get: () => ({ threadId: 'thr_one', face: ':-)', custom: false, projectId: 'proj_personal', source: 'automatic' as const }),
+      get: () => ({ threadId: 'thr_one', face: ':-)', projectId: 'proj_personal', source: 'automatic' as const }),
       getProjectDefault: () => ({ family: 'bear' as const, origin: 'project' as const, override: 'bear' as const }),
       setProjectDefault: () => { throw new Error('Save failed'); },
     },
@@ -340,7 +417,7 @@ test('custom activity mappings render in the header and fall back to markers for
   let state: 'running' | 'waiting' = 'waiting';
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { animation: 'off' }, rpc: {
-      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':)', custom: true, expressions: { waiting: ':?' } }),
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':)', expressions: { waiting: ':?' } }),
       activity: () => [{ threadId: 'thr_one', state }],
     },
   });
@@ -360,14 +437,14 @@ test('favorites update live and reuse their activity expressions', async () => {
   let applied: unknown;
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false }, rpc: {
-      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':D', custom: true }),
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':D' }),
       getLibrary: () => ({ favorites, recent: [{ face: ':-)' }] }),
       favorite: (input: unknown) => {
         const { face, saved } = input as {face:string;saved:boolean};
         favorites = saved ? [...favorites, { face, expressions: { waiting: ':?' } }] : favorites.filter(item => item.face !== face);
         return { favorites, recent: [] };
       },
-      set: (input: unknown) => { applied = input; return { threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', custom: true, ...input as {face:string} }; },
+      set: (input: unknown) => { applied = input; return { threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', ...input as {face:string} }; },
       getProjectDefault: () => ({ family: 'classic' as const, origin: 'global' as const, override: null }),
       previews: () => [],
     },
@@ -391,7 +468,7 @@ test('failed loading exposes retry without displaying an invented identity', asy
   let failed = true;
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false }, rpc: {
-      get: () => { if (failed) throw new Error('Offline'); return { threadId: 'thr_one', projectId: 'proj_personal', source: 'preset', face: ':-)', custom: true }; },
+      get: () => { if (failed) throw new Error('Offline'); return { threadId: 'thr_one', projectId: 'proj_personal', source: 'preset', face: ':-)' }; },
     },
   });
   try {
@@ -412,7 +489,7 @@ test('sidebar opens the shared picker with a hidden header, outside the host lin
   const navigate = vi.fn();
   row.addEventListener('click', navigate);
   const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
-  const identity = { threadId: 'thr_one', projectId: 'proj_personal', source: 'preset', face: ':-)', custom: true };
+  const identity = { threadId: 'thr_one', projectId: 'proj_personal', source: 'preset', face: ':-)' };
   const slot = renderSlot(app.appOverlays[0]!, {}, {
     settings: { showSidebar: true, showHeader: false, showActivity: false, animation: 'off' },
     rpc: {
@@ -448,7 +525,7 @@ test('header and 100 sidebar faces share a read and refresh only the changed thr
   document.body.append(wrapper);
   const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
   const activity = vi.fn((input: unknown) => (input as {threadIds:string[]}).threadIds.map(threadId => ({ threadId, state: 'running' })));
-  const identity = (threadId: string) => ({ threadId, projectId: 'proj_personal', source: 'preset', face: ':-)', custom: true });
+  const identity = (threadId: string) => ({ threadId, projectId: 'proj_personal', source: 'preset', face: ':-)' });
   const header = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { animation: 'off' }, rpc: { get: (input: unknown) => identity((input as {threadId:string}).threadId), activity },
   });
@@ -477,7 +554,7 @@ test('mounted automatic child refreshes when its parent changes', async () => {
   let face = '(•ω•)';
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_child', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false },
-    rpc: { get: () => ({ threadId: 'thr_child', face, custom: false, projectId: 'proj_personal', source: 'automatic' as const }) },
+    rpc: { get: () => ({ threadId: 'thr_child', face, projectId: 'proj_personal', source: 'automatic' as const }) },
   });
   try {
     await screen.findByRole('button', { name: 'Change thread asciimoji: (•ω•)' });
@@ -501,11 +578,11 @@ test('sidebar refreshes only the changed thread and ignores other projects', asy
   const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
   const faces: Record<string, string> = { thr_one: ':-)', thr_two: ':-)' };
   const getMany = vi.fn((input: unknown) => (input as { threadIds: string[] }).threadIds.map(threadId => ({
-    threadId, face: faces[threadId]!, custom: true, projectId: threadId === 'thr_one' ? 'proj_one' : 'proj_two', source: 'custom' as const,
+    threadId, face: faces[threadId]!, projectId: threadId === 'thr_one' ? 'proj_one' : 'proj_two', source: 'custom' as const,
   })));
   const get = vi.fn((input: unknown) => {
     const { threadId } = input as { threadId: string };
-    return { threadId, face: faces[threadId]!, custom: true, projectId: threadId === 'thr_one' ? 'proj_one' : 'proj_two', source: 'custom' as const };
+    return { threadId, face: faces[threadId]!, projectId: threadId === 'thr_one' ? 'proj_one' : 'proj_two', source: 'custom' as const };
   });
   const slot = renderSlot(app.appOverlays[0]!, {}, {
     settings: { showSidebar: true, showActivity: false, animation: 'off' },
@@ -531,10 +608,10 @@ test('favorites with identical text remain distinguishable', async () => {
   const app = await loadPluginApp(appDefinition);
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false }, rpc: {
-      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':D', custom: true }),
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':D' }),
       getLibrary: () => ({ favorites: [{ face: ':-)' }, { face: ':-)', expressions: { running: ':D' } }], recent: [] }),
       favorite: () => ({ favorites: [], recent: [] }),
-      set: (input: unknown) => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', custom: true, ...input as { face: string } }),
+      set: (input: unknown) => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', ...input as { face: string } }),
       getProjectDefault: () => ({ family: 'classic' as const, origin: 'global' as const, override: null }),
       previews: () => [],
     },
@@ -548,12 +625,12 @@ test('favorites with identical text remain distinguishable', async () => {
   } finally { slot.lifecycle.unmount(); }
 });
 
-test('legacy classic faces are not relabeled with the project default family', async () => {
+test('saved classic identities are not relabeled with the project default family', async () => {
   const app = await loadPluginApp(appDefinition);
-  const legacy = { version: 1 as const, ears: ['(', ')'] as [string, string], eyes: '•', mouth: 'ω', blinkOffset: 0 };
+  const saved = { version: 2 as const, family: 'classic' as const, ears: ['(', ')'] as [string, string], eyes: '•', mouth: 'ω', blinkOffset: 0 };
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false }, rpc: {
-      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'generated' as const, face: '(•ω•)', custom: true, generated: legacy }),
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'generated' as const, face: '(•ω•)', generated: saved }),
       getProjectDefault: () => ({ family: 'robot' as const, origin: 'project' as const, override: 'robot' as const }),
       previews: () => [],
       getLibrary: () => ({ favorites: [], recent: [] }),
@@ -576,7 +653,7 @@ test('sidebar width applies via data attributes and truncates long faces', async
   for (const width of ['compact', 'standard', 'expanded'] as const) {
     const slot = renderSlot(app.appOverlays[0]!, {}, {
       settings: { showSidebar: true, showActivity: false, animation: 'off', sidebarWidth: width },
-      rpc: { getMany: () => [{ threadId: 'thr_one', face: '(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧', custom: true, projectId: 'proj_personal', source: 'custom' as const }] },
+      rpc: { getMany: () => [{ threadId: 'thr_one', face: '(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧', projectId: 'proj_personal', source: 'custom' as const }] },
     });
     try {
       await waitFor(() => expect(row.querySelector(`[data-sidebar-width="${width}"]`)).toBeTruthy());
@@ -593,7 +670,7 @@ test('activity markers mode keeps static faces with status symbols', async () =>
   const app = await loadPluginApp(appDefinition);
   const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: true, activityStyle: 'markers', animation: 'off' }, rpc: {
-      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':)', custom: true, expressions: { waiting: ':?' } }),
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':)', expressions: { waiting: ':?' } }),
       activity: () => [{ threadId: 'thr_one', state: 'waiting' }],
     },
   });

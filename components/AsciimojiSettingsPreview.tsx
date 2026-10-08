@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSettings } from '@get-bb/plugin-sdk/app';
-import { FACE_FAMILIES, generateFaceV2, renderFace, type FaceFamily, type FaceState, type SidebarWidth } from '../faces.js';
+import { FACE_FAMILIES, generateFace, renderFace, type FaceFamily, type FaceState, type SidebarWidth } from '../faces.js';
 import { Face, usePreferences } from '../app.js';
 
 const STATES: FaceState[] = ['idle', 'running', 'waiting', 'error'];
@@ -14,7 +14,7 @@ export default function AsciimojiSettingsPreview() {
   const [width, setWidth] = useState<SidebarWidth | null>(null);
   const effectiveFamily: FaceFamily = family ?? preferences.defaultFamily;
   const effectiveWidth: SidebarWidth = width ?? preferences.sidebarWidth;
-  const sample = useMemo(() => generateFaceV2('preview', effectiveFamily), [effectiveFamily]);
+  const sample = useMemo(() => generateFace('preview', effectiveFamily), [effectiveFamily]);
   const base = renderFace(sample);
   const globalName = FACE_FAMILIES.find(item => item.id === preferences.defaultFamily)?.name ?? 'Classic';
 

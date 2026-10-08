@@ -1,5 +1,7 @@
 ## A familiar face for every thread
 
+Give each thread a persistent asciimoji with presets, custom faces, optional sidebar faces, and activity feedback.
+
 Recognize your workspace’s conversations with small text faces like `ʕ•ᴥ•ʔ`
 and `(⌐■_■)`. Each thread starts with a stable generated face in its header,
 so returning to a conversation feels familiar across sessions.
@@ -15,7 +17,7 @@ Precedence is Thread override → Project override → Global default. Set **Pro
 in the picker to give existing and new automatic faces
 in that project a shared style, or choose **Use global default** to inherit the global
 **Default face family** from plugin settings. Thread family selections, presets, and custom
-faces are saved overrides; Use automatic face follows the current global and project defaults. New automatic faces have varied mouths and accessories. Previously saved version-1 generated faces retain their original appearance; new saved generated identities stay stable across parent or project changes.
+faces are saved overrides; Use automatic face follows the current global and project defaults. New automatic faces have varied mouths and accessories. Old version-1 generated recipes migrate on first read to version-2 snapshots without changing visible text or their five-character width. New generated faces normally have six codepoints with an accessory; saved identities remain stable across parent or project changes.
 
 Choices are saved in bb and updates sync between connected windows. Each
 visible thread has its own control, including in split views. Custom faces can contain up to 40 Unicode code points on a single visible line. The editor previews drafts, counts characters, and rejects invisible faces. Retry controls recover failed loads. Sidebar faces also open the picker when the header is hidden.
@@ -53,9 +55,10 @@ Use `bb asciimoji get`, `bb asciimoji set '<face>'`, `bb asciimoji shuffle`,
 
 ## Requirements
 
-Requires bb 0.45 or later and Plugin SDK 0.6.15 or later. The plugin uses the
-experimental thread-header and app-overlay slots, plus a content script that
-decorates bb’s thread rows. No external service, account, or API key is
+Requires bb >=0.45 <1 and Plugin SDK >=0.6.15 <1. Experimental slots are
+feature-detected; sidebar content scripts decorate recognized thread rows
+and skip unknown layouts. Sidebar pickers need the overlay slot; where the
+host lacks it, the header (if available) and CLI remain usable. No external service, account, or API key is
 needed. Faces do not change conversation titles or agent prompts.
 
 ## Reuse and vary your favorites

@@ -30,8 +30,8 @@ const familyParts = {
 } as const;
 
 // Stable across processes and clients; never depends on a title or provider.
-export function defaultFace(threadId: string, parentThreadId?: string | null): string {
-  return renderFace(generateFace(threadId, parentThreadId));
+export function defaultFace(threadId: string, family: FaceFamily = 'classic'): string {
+  return renderFace(generateFace(threadId, family));
 }
 
 export type FaceState = 'idle' | 'running' | 'waiting' | 'error';
@@ -69,8 +69,8 @@ export function faceValidationError(value: string): string | null {
   return null;
 }
 export interface GeneratedFace {
-  version: 1 | 2;
-  family?: FaceFamily;
+  version: 2;
+  family: FaceFamily;
   ears: [string, string];
   eyes: string;
   mouth: string;
@@ -84,27 +84,8 @@ function identityHash(id: string): number {
   return hash >>> 0;
 }
 
-/** Thread identity is deterministic; children share their parent's hash-selected eyes. */
-export function generateFace(threadId: string, parentThreadId?: string | null, family: FaceFamily = 'classic'): GeneratedFace {
-  const hash = identityHash(threadId);
-  const eyeHash = identityHash(parentThreadId ?? threadId);
-  const ears = [['(', ')'], ['ʕ', 'ʔ'], ['[', ']'], ['{', '}']] as const;
-  const parts = family === 'classic' ? undefined : familyParts[family];
-  const pair = parts?.ears ?? ears[hash % ears.length]!;
-  const eyes = parts?.eyes ?? ['•', '^', 'o', '¬'];
-  const mouths = parts?.mouths ?? ['ω', 'ᴥ', 'ᴗ', '‿'];
-  return {
-    version: 1,
-    ...(family !== 'classic' ? { family } : {}),
-    ears: [pair[0], pair[1]],
-    eyes: eyes[(eyeHash >>> 4) % eyes.length]!,
-    mouth: mouths[(hash >>> 8) % mouths.length]!,
-    blinkOffset: (hash >>> 12) % 4000,
-  };
-}
-
-/** V1 above is frozen for legacy saved choices. V2 saves its complete identity. */
-export function generateFaceV2(threadId: string, family: FaceFamily = 'classic', options: {
+/** Single current generator. Saved identities are snapshots; children may inherit resolved parent eyes. */
+export function generateFace(threadId: string, family: FaceFamily = 'classic', options: {
   seed?: number; inheritedEyes?: string;
 } = {}): GeneratedFace {
   const hash = identityHash(`${threadId}:${options.seed ?? 0}:v2`);

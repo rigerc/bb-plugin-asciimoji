@@ -21,7 +21,15 @@ function publish(next: readonly Target[]) {
 
 export function mountSidebar({ signal }: PluginContentScriptContext) {
   const owned = new Map<HTMLElement, Target>();
-  const rowSelector = '[data-sidebar-thread-shortcut-target][data-sidebar-thread-id]';
+  // Layout adapter v1: only decorate rows with a recognizable, safe title layout.
+  // Unknown host layouts deliberately fall back to the thread-header face.
+  const rowSelector = '[data-sidebar-thread-id]';
+  const shortcutSelector = '[data-sidebar-thread-shortcut-target][data-sidebar-thread-id]';
+  function supportedRow(row: HTMLElement): boolean {
+    if (row.matches(shortcutSelector)) return true;
+    // Fallback for hosts that expose a row id and title but no shortcut anchor.
+    return !!row.querySelector('.bb-thread-title');
+  }
   let containers: HTMLElement[] = [];
   let scheduled: ReturnType<typeof setTimeout> | undefined;
   const visibility = () => { document.documentElement.dataset.asciimojiHidden = String(document.hidden); };
@@ -35,13 +43,26 @@ export function mountSidebar({ signal }: PluginContentScriptContext) {
   }
   function placement(row: HTMLElement) {
     // BB's shortcut anchor is an absolute click target, not the title layout.
-    const title = row.parentElement?.querySelector<HTMLElement>('.bb-thread-title');
-    if (title?.parentElement && !row.contains(title)) return { parent: title.parentElement, before: title };
+    const title = row.querySelector<HTMLElement>('.bb-thread-title')
+      ?? row.parentElement?.querySelector<HTMLElement>('.bb-thread-title');
+    if (title?.parentElement && (row.contains(title) || row.parentElement?.contains(title))) {
+      // A title may itself be inside a host link. Insert beside that link,
+      // never inside it (including the fallback layout without shortcut attrs).
+      const control = title.closest<HTMLElement>('a, button');
+      const before = control ?? title;
+      const parent = before.parentElement;
+      if (parent && !parent.closest('a, button')) return { parent, before };
+    }
     // Leave BB's inline rename editor undecorated.
     if (row.hasAttribute('data-sidebar-rename-anchor') || getComputedStyle(row).position === 'absolute') return null;
     // A picker button must never be nested inside the host's link/button.
-    if (row.matches('a, button') && row.parentElement) return { parent: row.parentElement, before: row };
-    return { parent: row, before: null };
+    if (row.matches('a, button')) {
+      if (row.parentElement && !row.parentElement.closest('a, button')) {
+        return { parent: row.parentElement, before: row };
+      }
+      return null;
+    }
+    return row.closest('a, button') ? null : { parent: row, before: null };
   }
   function place(element: HTMLElement, location: NonNullable<ReturnType<typeof placement>>) {
     if (location.before) {
@@ -52,7 +73,10 @@ export function mountSidebar({ signal }: PluginContentScriptContext) {
   }
   function scan() {
     if (signal.aborted || !enabled) return;
-    const rows = Array.from(document.querySelectorAll<HTMLElement>(rowSelector));
+    const candidates = Array.from(document.querySelectorAll<HTMLElement>(rowSelector));
+    // Prefer the host's dedicated shortcut target over a wrapping fallback row.
+    // One descendant query per row avoids comparing every row to every other row.
+    const rows = candidates.filter(row => supportedRow(row) && !row.querySelector(shortcutSelector));
     containers = [...new Set(rows.flatMap(row => {
       const parent = row.parentElement;
       return parent && parent !== document.body ? [parent] : [];

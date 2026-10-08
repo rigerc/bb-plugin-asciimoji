@@ -499,12 +499,23 @@ function SidebarFaces() {
 }
 
 export default definePluginApp(app => {
-  app.contentScripts.register({ id: 'sidebar-faces', mount: mountSidebar });
-  app.slots.experimental_appOverlay({ id: 'sidebar-faces', component: SidebarFaces });
-  app.slots.experimental_threadHeaderAction({
-    id: 'face', title: 'Thread asciimoji',
-    component: ({ threadId }) => <ThreadFace key={threadId} threadId={threadId} />,
-  });
+  // Experimental host surfaces are optional at runtime, even on a supported
+  // BB engine: a missing slot must not stop settings or CLI functionality.
+  // Registration is independent of the overlay capability. On hosts without
+  // an overlay this content script remains dormant because nothing enables it.
+  if (typeof app.contentScripts?.register === 'function') {
+    app.contentScripts.register({ id: 'sidebar-faces', mount: mountSidebar });
+  }
+  if (typeof app.slots.experimental_appOverlay === 'function' &&
+    typeof app.contentScripts?.register === 'function') {
+    app.slots.experimental_appOverlay({ id: 'sidebar-faces', component: SidebarFaces });
+  }
+  if (typeof app.slots.experimental_threadHeaderAction === 'function') {
+    app.slots.experimental_threadHeaderAction({
+      id: 'face', title: 'Thread asciimoji',
+      component: ({ threadId }) => <ThreadFace key={threadId} threadId={threadId} />,
+    });
+  }
   app.slots.settingsSection({
     id: 'appearance-preview', title: 'Appearance preview',
     description: 'Preview families, activity states, and sidebar widths without changing saved settings.',
