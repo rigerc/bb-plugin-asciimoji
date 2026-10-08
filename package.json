@@ -1,14 +1,14 @@
 {
   "name": "bb-plugin-asciimoji",
-  "version": "0.4.0",
+  "version": "1.0.0",
   "type": "module",
   "engines": {
-    "bb": ">=0.45",
-    "bbPluginSdk": ">=0.6.15"
+    "bb": ">=0.45 <1",
+    "bbPluginSdk": ">=0.6.15 <1"
   },
   "bb": {
     "name": "Asciimoji",
-    "description": "Personalize threads with persistent asciimoji, optional sidebar faces, and adjustable animations.",
+    "description": "Give each thread a persistent asciimoji with presets, custom faces, optional sidebar faces, and activity feedback.",
     "branding": {
       "icon": "Smile"
     },
@@ -56,6 +56,8 @@
   "scripts": {
     "build": "bb plugin build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test server.test.ts && vitest run app.test.tsx"
+    "test": "tsx --test server.test.ts && vitest run app.test.tsx",
+    "check:publish": "node scripts/check-publish.mjs",
+    "check:publish:metadata": "node scripts/check-publish.mjs --metadata-only"
   }
 }

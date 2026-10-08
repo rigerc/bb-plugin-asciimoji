@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakePluginHost, makeThreadResponse } from '@get-bb/plugin-sdk/testing';
 import plugin from './server.ts';
-import { defaultFace, FACES, FAMILY_IDS, generateFace, generateFaceV2, renderFace } from './faces.ts';
+import { FACES, FAMILY_IDS, generateFace, renderFace } from './faces.ts';
 
 const first = 'thr_first';
 const second = 'thr_second';
-const automatic = (threadId: string, family: Parameters<typeof generateFaceV2>[1] = 'classic') => generateFaceV2(threadId, family);
+const automatic = (threadId: string, family: Parameters<typeof generateFace>[1] = 'classic') => generateFace(threadId, family);
 const automaticFace = (threadId: string) => renderFace(automatic(threadId));
 async function host() {
   const result = createFakePluginHost({ pluginId: 'asciimoji', sdk: {
@@ -23,11 +23,11 @@ test('stable defaults, per-thread storage, reload persistence and reset', async 
   let { harness } = await host();
   try {
     const initial = await harness.behavior.callRpc('get', { threadId: first });
-    assert.deepEqual(initial, { threadId: first, projectId: 'project-1', source: 'automatic', face: automaticFace(first), custom: false, generated: automatic(first) });
+    assert.deepEqual(initial, { threadId: first, projectId: 'project-1', source: 'automatic', face: automaticFace(first), generated: automatic(first) });
     await harness.behavior.callRpc('set', { threadId: first, face: 'ʕ•ᴥ•ʔ' });
     harness = (await harness.lifecycle.reload(plugin)).harness;
-    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), { threadId: first, projectId: 'project-1', source: 'preset', face: 'ʕ•ᴥ•ʔ', custom: true });
-    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: second }), { threadId: second, projectId: 'project-1', source: 'automatic', face: automaticFace(second), custom: false, generated: automatic(second) });
+    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), { threadId: first, projectId: 'project-1', source: 'preset', face: 'ʕ•ᴥ•ʔ' });
+    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: second }), { threadId: second, projectId: 'project-1', source: 'automatic', face: automaticFace(second), generated: automatic(second) });
     assert.deepEqual(await harness.behavior.callRpc('reset', { threadId: first }), initial);
   } finally { await harness.lifecycle.dispose(); }
 });
@@ -40,7 +40,7 @@ test('rejects invalid input and missing threads before persisting', async () => 
     }
     await assert.rejects(harness.behavior.callRpc('set', { threadId: 'thr_missing', face: ':-)' }));
     await assert.rejects(harness.behavior.callRpc('get', { threadId: '../bad' }));
-    assert.equal((await harness.behavior.callRpc('get', { threadId: first }) as {custom:boolean}).custom, false);
+    assert.equal((await harness.behavior.callRpc('get', { threadId: first }) as {source:string}).source, 'automatic');
   } finally { await harness.lifecycle.dispose(); }
 });
 
@@ -55,7 +55,7 @@ test('shuffle changes face, CLI updates and deletion clears saved face', async (
     assert.equal(result.exitCode, 0);
     assert.equal(JSON.parse(result.stdout!).face, '[o_o]');
     await harness.behavior.emitThreadEvent('thread.deleted', { thread: makeThreadResponse({ id: first }) });
-    assert.equal((await harness.behavior.callRpc('get', { threadId: first }) as {custom:boolean}).custom, false);
+    assert.equal((await harness.behavior.callRpc('get', { threadId: first }) as {source:string}).source, 'automatic');
     assert.ok(harness.inspection.realtimeSignals.length > 0);
     assert.notEqual((await harness.behavior.runCli(['get', '--nonsense'])).exitCode, 0);
   } finally { await harness.lifecycle.dispose(); }
@@ -73,8 +73,8 @@ test('settings persist across reload and bulk lookup is bounded', async () => {
     await assert.rejects(harness.behavior.setSettings({ defaultFamily: 'invalid' }));
     const result = await harness.behavior.callRpc('getMany', { threadIds: [first, first, second, 'thr_missing'] });
     assert.deepEqual(result, [
-      { threadId: first, projectId: 'project-1', source: 'automatic', face: automaticFace(first), custom: false, generated: automatic(first) },
-      { threadId: second, projectId: 'project-1', source: 'automatic', face: automaticFace(second), custom: false, generated: automatic(second) },
+      { threadId: first, projectId: 'project-1', source: 'automatic', face: automaticFace(first), generated: automatic(first) },
+      { threadId: second, projectId: 'project-1', source: 'automatic', face: automaticFace(second), generated: automatic(second) },
     ]);
     await assert.rejects(harness.behavior.callRpc('getMany', { threadIds: Array(201).fill(first) }));
   } finally { await harness.lifecycle.dispose(); }
@@ -85,7 +85,7 @@ test('generated choices survive reload, inherit parent eyes, and reset to the ge
   let { harness } = await host();
   try {
     const generated = await harness.behavior.callRpc('generate', { threadId: first });
-    assert.deepEqual(generated, { threadId: first, projectId: 'project-1', source: 'generated', face: renderFace(automatic(first)), custom: true, generated: automatic(first) });
+    assert.deepEqual(generated, { threadId: first, projectId: 'project-1', source: 'generated', face: renderFace(automatic(first)), generated: automatic(first) });
     harness = (await harness.lifecycle.reload(plugin)).harness;
     assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), generated);
     harness.inspection.sdk.stub('threads.get', ({ threadId }) => makeThreadResponse({ id: threadId, parentThreadId: threadId === first ? null : first }));
@@ -95,10 +95,10 @@ test('generated choices survive reload, inherit parent eyes, and reset to the ge
     assert.equal(cli.exitCode, 0);
     assert.equal(JSON.parse(cli.stdout!).generated.version, 2);
     await harness.behavior.callRpc('set', { threadId: first, face: ':-)' });
-    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), { threadId: first, projectId: 'project-1', source: 'preset', face: ':-)', custom: true });
+    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), { threadId: first, projectId: 'project-1', source: 'preset', face: ':-)' });
     const reset = await harness.behavior.callRpc('reset', { threadId: second });
-    const expected = generateFaceV2(second);
-    assert.deepEqual(reset, { threadId: second, projectId: 'project-1', source: 'automatic', face: renderFace(expected), custom: false, generated: expected });
+    const expected = generateFace(second);
+    assert.deepEqual(reset, { threadId: second, projectId: 'project-1', source: 'automatic', face: renderFace(expected), generated: expected });
     await assert.rejects(harness.behavior.callRpc('generate', { threadId: '../bad' }));
   } finally { await harness.lifecycle.dispose(); }
 });
@@ -136,10 +136,11 @@ test('generated expressions keep their geometry and never alter the static ident
     for (const state of ['idle', 'running', 'waiting', 'error'] as const) {
       for (const elapsed of [0, 250, 750, 6000, 100000]) {
         const frame = renderFace(identity, { state, elapsed, animation: true });
-        assert.equal([...frame].length, 5);
+        assert.equal([...frame].length, 6);
         assert.equal(frame[0], initial[0]);
         assert.equal(frame[2], initial[2]);
         assert.equal(frame[4], initial[4]);
+        assert.equal(frame[5], initial[5]);
       }
       assert.equal(renderFace(identity, { state, elapsed: 1000 }), renderFace(identity, { state }));
     }
@@ -151,20 +152,20 @@ test('generated expressions keep their geometry and never alter the static ident
 
 test('each family is deterministic, varied, related, and supports every activity expression', () => {
   for (const family of FAMILY_IDS) {
-    const parent = generateFace(first, null, family);
-    const child = generateFace(second, first, family);
-    assert.deepEqual(generateFace(first, null, family), parent);
+    const parent = generateFace(first, family);
+    const child = generateFace(second, family, { inheritedEyes: parent.eyes });
+    assert.deepEqual(generateFace(first, family), parent);
     assert.equal(child.eyes, parent.eyes);
-    const variants = new Set(Array.from({ length: 40 }, (_, i) => renderFace(generateFace(`thr_${i}`, null, family))));
+    const variants = new Set(Array.from({ length: 40 }, (_, i) => renderFace(generateFace(`thr_${i}`, family))));
     assert.ok(variants.size > 1, family);
     for (const state of ['idle', 'running', 'waiting', 'error'] as const) {
-      assert.equal([...renderFace(child, { state, animation: true, elapsed: 800 })].length, 5);
+      assert.equal([...renderFace(child, { state, animation: true, elapsed: 800 })].length, 6);
     }
   }
-  assert.deepEqual(generateFace(first), generateFace(first, null, 'classic'));
+  assert.deepEqual(generateFace(first), generateFace(first, 'classic'));
 });
 
-test('project defaults follow authoritative project membership; overrides and legacy choices persist', async () => {
+test('project defaults respect saved generated snapshots and migrated choices', async () => {
   const result = createFakePluginHost({ pluginId: 'asciimoji', sdk: {
     threads: { get: async ({ threadId }) => {
       if (threadId === 'thr_missing') throw new Error('Thread not found');
@@ -173,7 +174,7 @@ test('project defaults follow authoritative project membership; overrides and le
   } });
   await plugin(result.bb);
   let { harness } = result;
-  const read = (threadId: string) => harness.behavior.callRpc('get', { threadId }) as Promise<{face:string; custom:boolean; generated:ReturnType<typeof generateFace>}>;
+  const read = (threadId: string) => harness.behavior.callRpc('get', { threadId }) as Promise<{face:string; source:string; generated:ReturnType<typeof generateFace>}>;
   try {
     await result.bb.storage.kv.set(`thread:${first}`, { version: 1, kind: 'generated' });
     await harness.behavior.callRpc('set', { threadId: 'thr_custom', face: ':-)' });
@@ -181,8 +182,8 @@ test('project defaults follow authoritative project membership; overrides and le
     await harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'bear' });
     assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: second }), { family: 'bear', origin: 'project', override: 'bear' });
     assert.deepEqual((await read(second)).generated, automatic(second, 'bear'));
-    assert.equal((await read(second)).custom, false);
-    assert.equal((await read(first)).face, defaultFace(first));
+    assert.equal((await read(second)).source, 'automatic');
+    assert.equal((await read(first)).face, '(¬‿¬)'); // v1 appearance preserved
     assert.equal((await read('thr_custom')).face, ':-)');
     assert.equal((await read('thr_pinned')).generated.family, 'cat');
     assert.equal((await read('thr_other_project')).face, automaticFace('thr_other_project'));
@@ -192,7 +193,7 @@ test('project defaults follow authoritative project membership; overrides and le
     assert.equal((await read('thr_new')).generated.family, 'bear');
     await harness.behavior.callRpc('reset', { threadId: 'thr_pinned' });
     assert.equal((await read('thr_pinned')).generated.family, 'bear');
-    assert.equal((await read('thr_pinned')).custom, false);
+    assert.equal((await read('thr_pinned')).source, 'automatic');
     await harness.behavior.callRpc('generate', { threadId: 'thr_generated' });
     await harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'robot' });
     assert.equal((await read('thr_generated')).generated.family, 'bear');
@@ -258,14 +259,26 @@ test('authoritative previews match saved children, and eyes follow three generat
   } finally { await harness.lifecycle.dispose(); }
 });
 
-test('legacy saved identities stay unchanged and new variations persist as snapshots', async () => {
+test('legacy recipes migrate once to v2 snapshots and new variations persist', async () => {
   const result = await host();
   let { harness } = result;
   try {
+    const originalFaces: Record<(typeof FAMILY_IDS)[number], string> = {
+      classic: '(¬‿¬)', bear: 'ʕ˘ω˘ʔ', robot: '[¬=¬]', cat: '(=ω=)', minimal: '(·ᴗ·)',
+    };
     for (const family of FAMILY_IDS) {
       await result.bb.storage.kv.set('thread:' + first, { version: 1, kind: 'generated', family });
-      const legacy = await harness.behavior.callRpc('get', { threadId: first }) as { face: string };
-      assert.equal(legacy.face, renderFace(generateFace(first, null, family)));
+      const migrated = await harness.behavior.callRpc('get', { threadId: first }) as import('./server.ts').Identity;
+      assert.equal(migrated.face, originalFaces[family], 'migration preserves v1 text');
+      assert.equal([...migrated.face].length, 5);
+      assert.equal(migrated.generated!.version, 2);
+      assert.equal(migrated.generated!.family, family);
+      assert.equal(migrated.generated!.accessory, undefined);
+      const stored = await result.bb.storage.kv.get('thread:' + first) as { version: number; identity: unknown };
+      assert.equal(stored.version, 2);
+      assert.deepEqual(stored.identity, migrated.generated);
+      assert.equal((await harness.behavior.callRpc('get', { threadId: first }) as import('./server.ts').Identity).face, migrated.face);
+      assert.equal([...renderFace(migrated.generated!, { state: 'running' })].length, 5);
     }
     const before = await harness.behavior.callRpc('generate', { threadId: first, family: 'cat' }) as { face: string };
     const varied = await harness.behavior.callRpc('vary', { threadId: first }) as import('./server.ts').Identity;
@@ -279,6 +292,48 @@ test('legacy saved identities stay unchanged and new variations persist as snaps
     assert.equal(reset.source, 'automatic');
     assert.equal(reset.generated!.family, 'robot');
   } finally { await harness.lifecycle.dispose(); }
+});
+
+test('v1 child migration uses its stored parent-id eye hash and stays pinned', async () => {
+  const result = createFakePluginHost({ pluginId: 'asciimoji', sdk: {
+    threads: { get: ({ threadId }: { threadId: string }) =>
+      makeThreadResponse({ id: threadId, parentThreadId: threadId === 'thr_child' ? first : null }) },
+  } });
+  await plugin(result.bb);
+  try {
+    await result.bb.storage.kv.set('thread:thr_child', { version: 1, kind: 'generated', family: 'classic' });
+    const read = () => result.harness.behavior.callRpc('get', { threadId: 'thr_child' }) as Promise<import('./server.ts').Identity>;
+    const migrated = await read();
+    assert.equal(migrated.face, '(¬ᴥ¬)');
+    assert.equal(migrated.generated?.accessory, undefined);
+    await result.harness.behavior.callRpc('generate', { threadId: first, family: 'cat' });
+    assert.deepEqual(await read(), migrated, 'migrated child remains a stable snapshot');
+  } finally { await result.harness.lifecycle.dispose(); }
+});
+
+test('a concurrent edit wins a migration read without recursion or accidental reset', async () => {
+  const result = await host();
+  const kv = result.bb.storage.kv;
+  const originalGet = kv.get.bind(kv);
+  try {
+    await kv.set('thread:' + first, { version: 1, kind: 'generated', family: 'cat' });
+    let reads = 0;
+    kv.get = (async (name: string) => {
+      const value = await originalGet(name);
+      if (name === 'thread:' + first && ++reads === 2) {
+        await kv.set(name, ':-)');
+        return ':-)';
+      }
+      return value;
+    }) as typeof kv.get;
+    const resolved = await result.harness.behavior.callRpc('get', { threadId: first }) as import('./server.ts').Identity;
+    assert.equal(resolved.face, ':-)');
+    assert.equal(resolved.source, 'preset');
+    assert.equal(await originalGet('thread:' + first), ':-)');
+  } finally {
+    kv.get = originalGet;
+    await result.harness.lifecycle.dispose();
+  }
 });
 
 test('custom expressions validate, persist, clear, and work through the CLI', async () => {
@@ -333,11 +388,11 @@ test('favorite and recent libraries are bounded, deduplicated, synced, and survi
   } finally { await harness.lifecycle.dispose(); }
 });
 
-test('v2 expression frames keep their geometry while increasing family variety', () => {
+test('generated expression frames keep their geometry while increasing family variety', () => {
   for (const family of FAMILY_IDS) {
     const siblings = new Set<string>();
     for (let index = 0; index < 200; index++) {
-      const identity = generateFaceV2('thr_' + index, family, { inheritedEyes: '^' });
+      const identity = generateFace('thr_' + index, family, { inheritedEyes: '^' });
       siblings.add(renderFace(identity));
       for (const state of ['idle', 'running', 'waiting', 'error'] as const) {
         assert.equal([...renderFace(identity, { state, animation: true, elapsed: 800 })].length, [...renderFace(identity)].length);
@@ -397,7 +452,7 @@ test('global defaults apply only to inherited projects and publish realtime inva
 
 test('centralized activity presentation keeps geometry across modes', async () => {
   const { resolveFaceDisplay } = await import('./faces.ts');
-  const generated = generateFaceV2('thr_demo', 'classic');
+  const generated = generateFace('thr_demo', 'classic');
   const base = renderFace(generated);
   assert.deepEqual(resolveFaceDisplay(base, { generated }), { displayed: base, marker: '' });
   assert.deepEqual(resolveFaceDisplay(base, { generated, state: 'running', activityStyle: 'markers' }), { displayed: base, marker: '·' });

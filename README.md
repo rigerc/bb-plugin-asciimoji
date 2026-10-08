@@ -1,5 +1,7 @@
 # Asciimoji for bb
 
+Give each thread a persistent asciimoji with presets, custom faces, optional sidebar faces, and activity feedback.
+
 Give every thread a familiar face: `ʕ•ᴥ•ʔ`, `(⌐■_■)`, or your own.
 
 Each thread automatically gets a stable generated face. Click it in the header,
@@ -9,7 +11,7 @@ persist across sessions. Titles and agent prompts are unaffected.
 
 ## Install
 
-Requires bb 0.45 or later with Plugin SDK 0.6.15 or later, plus Node.js and npm.
+Requires bb >=0.45 <1 with Plugin SDK >=0.6.15 <1, plus Node.js and npm.
 
 ```sh
 cd bb-plugin-asciimoji
@@ -50,9 +52,10 @@ the eyes they had when saved, even if the parent later changes.
 Expand **Project defaults** in the picker to change the family for all automatic
 faces in that project, including new threads. Saved choices remain as they are.
 
-Existing version-1 saved generated choices keep their original generator and
-appearance. New saved generated choices store a version-2 identity and seed.
-Automatic faces use version 2; no migration overwrites existing saved choices.
+Generated faces use one version-2 generator. Version-1 saved recipes are migrated
+on first read to version-2 snapshots **without changing their face or five-character
+width**. New generated identities normally have six codepoints including an
+accessory; existing snapshots retain their saved geometry.
 
 ### Favorites and recent faces
 
@@ -168,11 +171,21 @@ Set replaces the base face and expression map; omitted expression options clear
 previous mappings. Favorite saves the current static face and custom mappings;
 `--remove` removes that exact combination. JSON identities include a `source`
 of `automatic`, `generated`, `preset`, or `custom`, plus `projectId`.
-The compatibility `custom` field continues to mean any explicit thread override.
+The `source` field identifies automatic, generated, preset, or custom choices.
+The `custom` boolean is removed in version 1.0.0; consult [CHANGELOG.md](CHANGELOG.md)
+for migration of external consumers and generator API changes.
 
 Faces and the library live in plugin-owned BB storage. Deleting a thread removes
 its saved choice while reusable library entries remain. No external service,
 account, model call, or API key is required.
+
+## Publish readiness
+
+Run `npm run check:publish:metadata` in CI and `npm run check:publish` before release.
+The full check verifies description parity and
+requires three **real BB screenshots** in `assets/screenshots/`. See
+[the release checklist](docs/PUBLISHING.md) for the exact captures and checks.
+Screenshots must come from a running BB client; none are fabricated by this repository.
 
 ## Development
 
@@ -183,13 +196,17 @@ npm run build
 bb plugin dev
 ```
 
-The plugin uses the experimental thread-header and app-overlay slots. Sidebar
-faces use a content script and BB's thread-row shortcut attributes and title
-layout. Rows without those extension points cannot be decorated. Sidebar
-mutations are filtered and scans are coalesced; controls sit outside host links.
-Compatibility depends on these host extension points remaining available.
+The plugin requires bb >=0.45 <1 and Plugin SDK >=0.6.15 <1. Experimental
+thread-header and app-overlay slots are feature-detected: unavailable slots
+are skipped without preventing CLI or settings use. Content-script registration
+is independent of the overlay slot; the interactive sidebar picker still needs
+the overlay to render. Sidebar faces first use
+BB's thread-row shortcut attributes; rows with a thread id and recognized
+title structure are a fallback. Unknown host layouts are left untouched and
+header faces remain available. Sidebar scans are coalesced, and controls are
+never inserted into host links or buttons.
 
 Backend RPC validates inputs and outputs. The frontend uses BB's shared React
-runtime and vendored BB controls. Tests cover legacy compatibility, exact
+runtime and vendored BB controls. Tests cover one-time v1 migration, exact
 previews, multigeneration inheritance, library bounds, expressions, retries,
 sidebar access, and shared targeted activity reads.

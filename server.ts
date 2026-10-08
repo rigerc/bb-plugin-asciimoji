@@ -1,7 +1,8 @@
 import { randomInt } from 'node:crypto';
 import { cliCommand, defineCli, defineRpcContract, type BbPluginApi } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
-import { FACES, FAMILY_IDS, faceValidationError, generateFace, generateFaceV2, renderFace, type FaceFamily, type GeneratedFace } from './faces.js';
+import { migrateGeneratedV1 } from './migration.js';
+import { FACES, FAMILY_IDS, faceValidationError, generateFace, renderFace, type FaceFamily, type GeneratedFace } from './faces.js';
 
 const threadIdSchema = z.string().regex(/^thr_[a-zA-Z0-9_-]+$/).max(128);
 export const faceSchema = z.string().refine(value => faceValidationError(value) === null,
@@ -10,18 +11,18 @@ export const familySchema = z.enum(FAMILY_IDS);
 const originSchema = z.enum(['global', 'project']);
 const projectDefaultSchema = z.object({ family: familySchema, origin: originSchema, override: familySchema.nullable() });
 const generatedSchema = z.object({
-  version: z.union([z.literal(1), z.literal(2)]), family: familySchema.optional(), ears: z.tuple([z.string().length(1), z.string().length(1)]),
+  version: z.literal(2), family: familySchema, ears: z.tuple([z.string().length(1), z.string().length(1)]),
   eyes: z.string().length(1), mouth: z.string().length(1), blinkOffset: z.number().int().min(0).max(3999), accessory: z.string().length(1).optional(),
 });
 const legacyChoice = z.object({ version: z.literal(1), kind: z.literal('generated'), family: familySchema.optional() }).strict();
 const generatedChoice = z.object({ version: z.literal(2), kind: z.literal('generated'), seed: z.number().int().min(0).max(2147483647),
-  identity: generatedSchema.extend({ version: z.literal(2), family: familySchema }) }).strict();
+  identity: generatedSchema }).strict();
 export const expressionsSchema = z.object({ running: faceSchema.optional(), waiting: faceSchema.optional(), error: faceSchema.optional() }).strict();
 const savedFaceSchema = z.object({ face: faceSchema, expressions: expressionsSchema.optional() }).strict();
 const customChoice = savedFaceSchema.extend({ version: z.literal(2), kind: z.literal('custom') }).strict();
 const librarySchema = z.object({ favorites: z.array(savedFaceSchema).max(50), recent: z.array(savedFaceSchema).max(20) });
 const stateSchema = z.enum(['idle', 'running', 'waiting', 'error']);
-const identitySchema = z.object({ threadId: threadIdSchema, projectId: z.string(), face: faceSchema, custom: z.boolean(),
+const identitySchema = z.object({ threadId: threadIdSchema, projectId: z.string(), face: faceSchema,
   source: z.enum(['automatic', 'generated', 'preset', 'custom']), generated: generatedSchema.optional(), expressions: expressionsSchema.optional() });
 export type Identity = z.infer<typeof identitySchema>;
 export type LibraryFace = z.infer<typeof savedFaceSchema>;
@@ -91,8 +92,7 @@ export default function plugin(bb: BbPluginApi) {
   /** Automatic children inherit their parent's eyes, so a parent change can alter
    * their derived faces. Collect automatic descendants for targeted invalidation.
    * Traversal stops at pinned/custom threads: their frozen faces block propagation
-   * to deeper generations (legacy v1 children hash the parent id, not its eyes,
-   * so they are also unaffected and excluded via their stored value). */
+   * to deeper generations. Migration snapshots also block propagation. */
   async function findAutomaticDescendants(rootId: string): Promise<string[]> {
     const seen = new Set<string>([rootId]);
     const queue = [rootId];
@@ -110,7 +110,7 @@ export default function plugin(bb: BbPluginApi) {
         let stored: unknown;
         try { stored = await bb.storage.kv.get(key(child.id)); }
         catch { continue; }
-        // Any stored value (preset text, custom map, pinned v2, legacy v1)
+        // Any saved value
         // freezes the face, so it neither changes nor propagates further.
         if (stored !== null && stored !== undefined) continue;
         affected.push(child.id);
@@ -135,28 +135,47 @@ export default function plugin(bb: BbPluginApi) {
         if (parent.generated && (parent.generated.family ?? 'classic') === family) inheritedEyes = parent.generated.eyes;
       } catch { /* Missing parents do not make the child's face unavailable. */ }
     }
-    return generateFaceV2(threadId, family, { seed, inheritedEyes });
+    return generateFace(threadId, family, { seed, inheritedEyes });
   }
   async function get(threadId: string, ancestors = new Set<string>()): Promise<Identity> {
     const thread = await bb.sdk.threads.get({ threadId });
-    const value = await bb.storage.kv.get(key(threadId));
+    let value = await bb.storage.kv.get(key(threadId));
+    const base = { threadId, projectId: thread.projectId };
+    // Bounded retry when another reader or writer changes the stored choice.
+    // Never recurse on contention or overwrite a value already observed to differ.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const legacy = legacyChoice.safeParse(value);
+      if (!legacy.success) break;
+      const identity = migrateGeneratedV1(threadId, thread.parentThreadId, legacy.data.family ?? 'classic');
+      const latest = await bb.storage.kv.get(key(threadId));
+      if (JSON.stringify(latest) !== JSON.stringify(value)) {
+        value = latest;
+        continue;
+      }
+      const migrated = generatedChoice.parse({ version: 2, kind: 'generated', seed: 0, identity });
+      await bb.storage.kv.set(key(threadId), migrated);
+      value = migrated;
+      break;
+    }
+    if (legacyChoice.safeParse(value).success) {
+      throw new Error('Saved face changed during migration; retry the request.');
+    }
+    // Parse the final value: a concurrent writer can replace a v1 recipe with
+    // a custom/preset choice while migration is preparing its snapshot.
     const stored = faceSchema.safeParse(value);
     const custom = customChoice.safeParse(value);
-    const base = { threadId, projectId: thread.projectId };
     if (stored.success || custom.success) {
       const face = custom.success ? custom.data.face : stored.data!;
       const expressions = custom.success ? custom.data.expressions : undefined;
-      return { ...base, face, custom: true,
+      return { ...base, face,
         source: !expressions && FACES.some(item => item.face === face) ? 'preset' : 'custom',
         ...(expressions ? { expressions } : {}) };
     }
     const choice = generatedChoice.safeParse(value);
-    const legacy = legacyChoice.safeParse(value);
-    const generated = choice.success ? choice.data.identity : legacy.success
-      ? generateFace(threadId, thread.parentThreadId, legacy.data.family ?? 'classic')
+    const generated = choice.success ? choice.data.identity
       : await buildIdentity(threadId, await projectFamily(thread.projectId), 0, ancestors);
-    return { ...base, face: renderFace(generated), custom: choice.success || legacy.success,
-      source: choice.success || legacy.success ? 'generated' : 'automatic', generated };
+    return { ...base, face: renderFace(generated),
+      source: choice.success ? 'generated' : 'automatic', generated };
   }
   let libraryQueue: Promise<unknown> = Promise.resolve();
   const entryKey = (entry: LibraryFace) => JSON.stringify([entry.face, entry.expressions?.running, entry.expressions?.waiting, entry.expressions?.error]);

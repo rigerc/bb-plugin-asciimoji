@@ -25,7 +25,7 @@ and sync across windows. An Appearance preview section shows header/sidebar face
 and truncation without modifying saved settings.
 
 `bb asciimoji generate` saves a deterministic face assembled from the thread ID.
-New automatic children in the same generated family use their parent's actual eyes across generations. New saved generated faces store their identity and seed; their eyes stay as saved if the parent later changes. Legacy version-1 saved choices retain the old generator. Generated faces are automatic
+New automatic children in the same generated family use their parent's actual eyes across generations. New saved generated faces store their identity and seed; their eyes stay as saved if the parent later changes. Stored version-1 generated recipes migrate on first read into version-2 snapshots without changing their five-codepoint face. Generated faces are automatic
 for every thread; saved presets and custom
 choices remain explicit overrides. Generate replaces an override; reset restores
 the automatic generated face.
@@ -40,7 +40,7 @@ assert successful completion.
 
 Face families are `classic`, `bear`, `robot`, `cat`, and `minimal`. Use
 `bb asciimoji generate --family bear` to save a thread family override. Generate
-without `--family` saves the current project family. Existing version-1 saved generated choices retain their original identity and family.
+without `--family` saves the current project family. Older saved generated recipes migrate without visual churn and remain stable as saved snapshots.
 Use `bb asciimoji project-default` to read the target thread's effective family (JSON adds `origin` and `override`),
 or `bb asciimoji project-default robot` to set a project override. `classic` stores an explicit Classic override.
 `inherit` deletes the override. Classic selects a mixed-style family. Automatic faces use the varied version-2 generator. Precedence is thread → project → global default. Project defaults apply to existing and new automatic
@@ -54,6 +54,6 @@ Use `bb asciimoji vary` or Try another variation to save a visibly different fac
 
 Use `bb asciimoji favorite` to favorite the current static face and any custom expressions; `--remove` removes that exact combination. `bb asciimoji library --json` lists favorites and recent faces without requiring a thread. The library stores up to 50 favorites and 20 distinct recent choices, syncs across windows, and survives reloads. Reusing a generated favorite saves its static text with activity markers, not its generated identity.
 
-Set optional custom activity faces with `bb asciimoji set ':-)' --running ':D' --waiting ':?' --error ':('`. Set replaces the expression map; omitted states use markers. The picker has the same three inputs and an activity preview. Favorites preserve mappings. Controls use the same face validation for every state. JSON identities report `source` (automatic, generated, preset, custom) and `projectId`; `custom` remains the compatibility flag for any explicit override.
+Set optional custom activity faces with `bb asciimoji set ':-)' --running ':D' --waiting ':?' --error ':('`. Set replaces the expression map; omitted states use markers. The picker has the same three inputs and an activity preview. Favorites preserve mappings. Controls use the same face validation for every state. JSON identities report `source` (automatic, generated, preset, custom) and `projectId`; the `custom` boolean was removed in the 1.0.0 breaking API (use `source`).
 
 Header, sidebar, and open pickers share activity reads per window. Notifications refresh only affected threads; requests coalesce and reconnects restore authoritative state.
