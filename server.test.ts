@@ -89,8 +89,9 @@ test('generated choices survive reload, inherit parent eyes, and reset to the ge
     harness = (await harness.lifecycle.reload(plugin)).harness;
     assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), generated);
     harness.inspection.sdk.stub('threads.get', ({ threadId }) => makeThreadResponse({ id: threadId, parentThreadId: threadId === first ? null : first }));
-    const child = await harness.behavior.callRpc('generate', { threadId: second }) as { generated: { eyes: string } };
-    assert.equal(child.generated.eyes, automatic(first).eyes);
+    const child = await harness.behavior.callRpc('generate', { threadId: second }) as import('./server.ts').Identity;
+    assert.equal(child.generated!.eyes, automatic(first).eyes);
+    assert.equal(child.parentThreadId, first, 'saved generated child retains its thread parent');
     const cli = await harness.behavior.runCli(['generate', '--thread', second, '--json']);
     assert.equal(cli.exitCode, 0);
     assert.equal(JSON.parse(cli.stdout!).generated.version, 2);
@@ -98,7 +99,9 @@ test('generated choices survive reload, inherit parent eyes, and reset to the ge
     assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), { threadId: first, projectId: 'project-1', source: 'preset', face: ':-)', custom: true });
     const reset = await harness.behavior.callRpc('reset', { threadId: second });
     const expected = generateFaceV2(second);
-    assert.deepEqual(reset, { threadId: second, projectId: 'project-1', source: 'automatic', face: renderFace(expected), custom: false, generated: expected });
+    assert.deepEqual(reset, { threadId: second, parentThreadId: first, projectId: 'project-1', source: 'automatic', face: renderFace(expected), custom: false, generated: expected });
+    const customized = await harness.behavior.callRpc('set', { threadId: second, face: ':-)' }) as import('./server.ts').Identity;
+    assert.equal(customized.parentThreadId, first, 'customized children remain children');
     await assert.rejects(harness.behavior.callRpc('generate', { threadId: '../bad' }));
   } finally { await harness.lifecycle.dispose(); }
 });
@@ -245,6 +248,9 @@ test('authoritative previews match saved children, and eyes follow three generat
   try {
     await harness.behavior.callRpc('setProjectDefault', { threadId: 'thr_root', family: 'cat' });
     const root = await read('thr_root'), child = await read('thr_child'), grandchild = await read('thr_grandchild');
+    assert.equal(root.parentThreadId, undefined);
+    assert.equal(child.parentThreadId, 'thr_root');
+    assert.equal(grandchild.parentThreadId, 'thr_child');
     assert.equal(root.generated!.eyes, child.generated!.eyes);
     assert.equal(child.generated!.eyes, grandchild.generated!.eyes);
     const previews = await harness.behavior.callRpc('previews', { threadId: 'thr_grandchild' }) as { family: string; face: string }[];
