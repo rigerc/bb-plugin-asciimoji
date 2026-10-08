@@ -32,6 +32,27 @@ test('stable defaults, per-thread storage, reload persistence and reset', async 
   } finally { await harness.lifecycle.dispose(); }
 });
 
+test('parent metadata identifies child threads across automatic and saved face choices', async () => {
+  const result = createFakePluginHost({ pluginId: 'asciimoji', sdk: {
+    threads: { get: ({ threadId }) => makeThreadResponse({
+      id: threadId, parentThreadId: threadId === 'thr_root' ? null : 'thr_root',
+    }) },
+  } });
+  await plugin(result.bb);
+  const { harness } = result;
+  const get = (threadId: string) => harness.behavior.callRpc('get', { threadId }) as Promise<import('./server.ts').Identity>;
+  try {
+    assert.equal((await get('thr_root')).parentThreadId, undefined);
+    assert.equal((await get('thr_child')).parentThreadId, 'thr_root');
+    await harness.behavior.callRpc('set', { threadId: 'thr_child', face: ':-)' });
+    assert.equal((await get('thr_child')).parentThreadId, 'thr_root', 'custom faces still mark child threads');
+    await harness.behavior.callRpc('generate', { threadId: 'thr_child', family: 'bear' });
+    assert.equal((await get('thr_child')).parentThreadId, 'thr_root', 'saved generated faces still mark child threads');
+    const many = await harness.behavior.callRpc('getMany', { threadIds: ['thr_root', 'thr_child'] }) as import('./server.ts').Identity[];
+    assert.deepEqual(many.map(identity => identity.parentThreadId), [undefined, 'thr_root']);
+  } finally { await harness.lifecycle.dispose(); }
+});
+
 test('rejects invalid input and missing threads before persisting', async () => {
   const { harness } = await host();
   try {
