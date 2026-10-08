@@ -5,7 +5,7 @@ import { loadPluginApp, mountPluginContentScripts, renderSlot } from '@get-bb/pl
 import appDefinition from './app.js';
 import type { rpcContract } from './server.js';
 import { useFaceClock } from './hooks/useFaceClock.js';
-import { generateFace, renderFace } from './faces.js';
+import { generateFace, renderFace, type FaceFamily } from './faces.js';
 import type { PluginThreadHeaderActionProps } from '@get-bb/plugin-sdk';
 
 Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: vi.fn().mockImplementation(() => ({
@@ -16,10 +16,13 @@ afterEach(cleanup);
 async function mount(settings: Record<string, string | boolean> = {}) {
   const app = await loadPluginApp(appDefinition);
   let face = ':-)';
+  let projectFamily: FaceFamily = 'classic';
   const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings: { showActivity: false, ...settings },
     rpc: {
-      generate: ({ threadId }) => { const generated = generateFace(threadId); face = renderFace(generated); return { threadId, face, custom: true, generated }; },
+      getProjectDefault: () => ({ family: projectFamily }),
+      setProjectDefault: ({ family }) => { projectFamily = family; return { family }; },
+      generate: ({ threadId, family }) => { const generated = generateFace(threadId, undefined, family ?? projectFamily); face = renderFace(generated); return { threadId, face, custom: true, generated }; },
       activity: ({ threadIds }) => threadIds.map(threadId => ({ threadId, state: 'running' as const })),
       getMany: ({ threadIds }) => threadIds.map(threadId => ({ threadId, face, custom: true })),
       get: ({ threadId }: {threadId:string}) => ({ threadId, face, custom: true }),
@@ -94,7 +97,7 @@ test('optional sidebar faces follow updates and clean up on disposal', async () 
   expect(row.querySelector('[data-motion="playful"]')).toBeTruthy();
   expect(row.querySelector('.text-primary')).toBeTruthy();
   face = '[o_o]';
-  await slot.behavior.emitRealtime('changed', { threadId: 'thr_one' });
+  await slot.behavior.emitRealtime('changed', { projectId: 'proj_personal' });
   await waitFor(() => expect(row.textContent).toBe('[o_o]Original title'));
   const addedRow = row.cloneNode(false) as HTMLElement;
   addedRow.dataset.sidebarThreadId = 'thr_two';
@@ -245,5 +248,56 @@ test('generated identities and activity are automatic without opt-in settings', 
     fireEvent.click(button);
     const reset = await screen.findByRole('button', { name: 'Reset to default' });
     expect((reset as HTMLButtonElement).disabled).toBe(true);
+  } finally { slot.lifecycle.unmount(); }
+});
+
+
+test('family selection saves a generated thread override', async () => {
+  const { slot } = await mount();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Use Bears family' }));
+    const expected = renderFace(generateFace('thr_one', undefined, 'bear'));
+    await screen.findByRole('button', { name: `Change thread asciimoji: ${expected}` });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(slot.inspection.rpcCalls.some(call => call.method === 'generate' && (call.input as {family:string}).family === 'bear')).toBe(true);
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('project default can be changed in the picker and project signals refresh faces', async () => {
+  const { slot, update } = await mount();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    const select = await screen.findByRole('combobox', { name: 'Project default face family' });
+    await waitFor(() => expect((select as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(select, { target: { value: 'robot' } });
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe('robot'));
+    expect(slot.inspection.rpcCalls.some(call => call.method === 'setProjectDefault' && (call.input as {family:string}).family === 'robot')).toBe(true);
+    update('[•_•]');
+    await slot.behavior.emitRealtime('changed', { projectId: 'proj_personal' });
+    await screen.findByRole('button', { name: 'Change thread asciimoji: [•_•]', hidden: true });
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe('robot'));
+  } finally { slot.lifecycle.unmount(); }
+});
+
+
+test('a rejected project default save keeps the previous selection and shows an error', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false },
+    rpc: {
+      get: () => ({ threadId: 'thr_one', face: ':-)', custom: false }),
+      getProjectDefault: () => ({ family: 'bear' }),
+      setProjectDefault: () => { throw new Error('Save failed'); },
+    },
+  });
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    const select = await screen.findByRole('combobox', { name: 'Project default face family' });
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe('bear'));
+    fireEvent.change(select, { target: { value: 'cat' } });
+    expect((await screen.findByRole('alert')).textContent).toContain('Save failed');
+    expect((select as HTMLSelectElement).value).toBe('bear');
+    expect((select as HTMLSelectElement).disabled).toBe(false);
   } finally { slot.lifecycle.unmount(); }
 });

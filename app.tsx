@@ -4,7 +4,7 @@ import './app.css';
 import { enableSidebar, getTargets, mountSidebar, subscribeTargets } from './sidebar.js';
 import { useSettings, definePluginApp, useRealtime, useRealtimeConnectionState, useRpc } from '@get-bb/plugin-sdk/app';
 import type { rpcContract } from './server.js';
-import { defaultFace, generateFace, FACES, renderFace, type GeneratedFace, type FaceState } from './faces.js';
+import { defaultFace, generateFace, FACES, FACE_FAMILIES, renderFace, type FaceFamily, type GeneratedFace, type FaceState } from './faces.js';
 import { useFaceClock } from './hooks/useFaceClock.js';
 import { Button } from './components/ui/button.js';
 import { Input } from './components/ui/input.js';
@@ -55,6 +55,51 @@ function useActivity(threadIds: string[], enabled: boolean): Record<string, Face
   });
   return enabled ? states : {};
 }
+function ProjectFamily({ threadId, disabled }: { threadId: string; disabled: boolean }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const connection = useRealtimeConnectionState();
+  const [family, setFamily] = useState<FaceFamily | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const revision = useRef(0);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const load = useCallback(() => {
+    const version = ++revision.current;
+    void rpc.call('getProjectDefault', { threadId }).then(value => {
+      if (version === revision.current) { setFamily(value.family); setError(null); }
+    }, cause => { if (version === revision.current) setError(String(cause)); });
+  }, [rpc, threadId]);
+  useEffect(() => { load(); return () => { revision.current++; }; }, [load, connection]);
+  useRealtime('changed', payload => {
+    if (payload && typeof payload === 'object' && 'projectId' in payload) load();
+  });
+  async function save(next: FaceFamily) {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    const version = ++revision.current;
+    try {
+      const value = await rpc.call('setProjectDefault', { threadId, family: next });
+      if (version === revision.current) setFamily(value.family);
+    } catch (cause) { if (version === revision.current) setError(String(cause)); }
+    finally { if (alive.current) setPending(false); }
+  }
+  return <div className="space-y-2">
+    <label className="flex items-center justify-between gap-2 text-sm">
+      Project default
+      <select aria-label="Project default face family" value={family ?? ''} disabled={disabled || pending || family === null}
+        className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+        onChange={event => void save(event.target.value as FaceFamily)}>
+        {family === null && <option value="">Loading…</option>}
+        {FACE_FAMILIES.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+    </label>
+    <p className="text-xs text-muted-foreground">Applies to this project’s automatic faces, including new threads. Saved thread choices stay as they are.</p>
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+  </div>;
+}
+
 function ThreadFace({ threadId }: { threadId: string }) {
   const preferences = usePreferences();
   const states = useActivity([threadId], preferences.showActivity && preferences.showHeader);
@@ -82,9 +127,9 @@ function ThreadFace({ threadId }: { threadId: string }) {
   }, []);
   useEffect(() => { load(); }, [load, connection]);
   useRealtime('changed', payload => {
-    if (payload && typeof payload === 'object' && 'threadId' in payload && payload.threadId === threadId) load();
+    if (payload && typeof payload === 'object' && (('threadId' in payload && payload.threadId === threadId) || 'projectId' in payload)) load();
   });
-  async function save(action: 'set' | 'shuffle' | 'reset' | 'generate', face?: string) {
+  async function save(action: 'set' | 'shuffle' | 'reset' | 'generate', face?: string, family?: FaceFamily) {
     if (pending) return;
     setPending(true);
     setError(null);
@@ -92,6 +137,7 @@ function ThreadFace({ threadId }: { threadId: string }) {
     try {
       const value = action === 'set'
         ? await rpc.call('set', { threadId, face: face ?? draft })
+        : action === 'generate' ? await rpc.call('generate', { threadId, ...(family ? { family } : {}) })
         : await rpc.call(action, { threadId });
       if (alive.current) { setIdentity(value); setOpen(false); }
     } catch (cause) { report(cause); }
@@ -105,12 +151,24 @@ function ThreadFace({ threadId }: { threadId: string }) {
         <Face face={identity.face} generated={identity.generated} state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} />
       </Button>
     </DialogTrigger>
-    <DialogContent className="sm:max-w-md">
+    <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
       <DialogHeader>
         <DialogTitle>Your thread’s asciimoji</DialogTitle>
         <DialogDescription>Pick a face to make this thread yours. Your choice is saved across sessions.</DialogDescription>
       </DialogHeader>
       <div className="rounded-lg bg-muted p-5 text-center font-mono text-2xl" aria-label="Current asciimoji"><Face face={identity.face} generated={identity.generated} state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} /></div>
+      <div className="space-y-2">
+        <p className="text-sm font-medium">Face family for this thread</p>
+        <div className="grid grid-cols-3 gap-2">
+          {FACE_FAMILIES.map(item => <Button key={item.id} variant={identity.generated && (identity.generated.family ?? 'classic') === item.id ? 'secondary' : 'outline'}
+            className="h-auto flex-col gap-1 px-1 py-2" disabled={pending}
+            aria-pressed={!!identity.generated && (identity.generated.family ?? 'classic') === item.id}
+            aria-label={`Use ${item.name} family`} onClick={() => void save('generate', undefined, item.id)}>
+            <span className="font-mono text-xs"><Face face={renderFace(generateFace(threadId, undefined, item.id))} animation={preferences.animation} useThemeColor={preferences.useThemeColor} /></span>
+            <span className="text-xs text-muted-foreground">{item.name}</span>
+          </Button>)}
+        </div>
+      </div>
       <div className="grid grid-cols-3 gap-2">
         {FACES.map(item => <Button key={item.name} variant={!identity.generated && identity.face === item.face ? 'secondary' : 'outline'}
           className="h-auto flex-col gap-1 px-1 py-3" disabled={pending} aria-pressed={!identity.generated && identity.face === item.face}
@@ -124,7 +182,8 @@ function ThreadFace({ threadId }: { threadId: string }) {
       </form>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <Button variant="outline" disabled={pending} onClick={() => void save('generate')}>Use generated face</Button>
-      <p className="text-xs text-muted-foreground">Every thread starts with a generated face. Child faces share their parent’s eyes.</p>
+      <p className="text-xs text-muted-foreground">Generated faces vary within a family. Child faces in the same family share their parent’s eyes. Reset follows the project default.</p>
+      <ProjectFamily threadId={threadId} disabled={pending} />
       <div className="flex justify-between gap-2">
         <Button variant="outline" disabled={pending} onClick={() => void save('shuffle')}>Surprise me</Button>
         <Button variant="ghost" disabled={pending || !identity.custom} onClick={() => void save('reset')}>Reset to default</Button>
@@ -156,7 +215,7 @@ function SidebarFaces() {
   }, [rpc, ids, preferences.showSidebar]);
   useEffect(() => { load(); return () => { revision.current++; }; }, [load, connection]);
   useRealtime('changed', payload => {
-    if (payload && typeof payload === 'object' && 'threadId' in payload && targets.some(target => target.threadId === payload.threadId)) load();
+    if (payload && typeof payload === 'object' && (('threadId' in payload && targets.some(target => target.threadId === payload.threadId)) || 'projectId' in payload)) load();
   });
   if (!preferences.showSidebar) return null;
   return <>{targets.map(({ threadId, element }, index) => createPortal(

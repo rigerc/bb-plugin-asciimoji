@@ -3,7 +3,7 @@
 Give every thread a familiar face: `ʕ•ᴥ•ʔ`, `(⌐■_■)`, or your own.
 
 Each thread automatically gets a stable generated asciimoji in its header. Click it to choose
-from 12 presets, write a custom face, pick a surprise, generate a face, or restore the default.
+from 12 presets, write a custom face, pick a surprise, choose a generated face family, or restore the project default.
 Saved choices persist across sessions and sync between connected windows.
 
 ## Install
@@ -49,6 +49,9 @@ bb asciimoji get
 bb asciimoji set 'ʕ•ᴥ•ʔ'
 bb asciimoji shuffle
 bb asciimoji generate
+bb asciimoji generate --family bear
+bb asciimoji project-default
+bb asciimoji project-default robot
 bb asciimoji reset
 bb asciimoji get --thread thr_example --json
 ```
@@ -57,15 +60,39 @@ Commands default to the current bb thread. Outside a thread, supply `--thread`.
 Custom faces support Unicode and are limited to 40 characters on one visible
 line. Control characters are rejected. Presets can repeat across threads.
 
+### Face families and project defaults
+
+Choose **Classic**, **Bears**, **Robots**, **Cats**, or **Minimal** in the thread
+picker. Each family generates stable variations from the thread ID and supports
+activity expressions. Child threads in the same family share their parent's eyes.
+Classic keeps the original mixed-style generator.
+
+The picker's **Project default** selector sets the family for all automatic faces
+in that project, including existing threads and newly created ones. It defaults
+to Classic. Changes persist across reloads and sync to headers, sidebars, and
+pickers in connected windows.
+
+Selecting a family for a thread saves an override. Presets, custom text, and saved
+generated faces keep their identity when the project default changes. **Reset to
+default** removes the override so the thread follows its project's family again.
+Previously saved generated choices retain their Classic identity.
+
+From the shell, use `generate --family bear` for a thread override, or
+`project-default robot` to set its project's family. Family IDs are `classic`,
+`bear`, `robot`, `cat`, and `minimal`. `project-default` without a family reports
+the current default; `project-default classic` restores the original generator.
+These commands accept `--thread` and `--json` like the other commands. A project
+is resolved from the target thread.
+
 ### Generated faces and activity
 
 Every thread automatically uses a generated face. The thread ID selects curated
 delimiters, eyes, and a mouth without model calls.
-Child threads inherit their parent's hash-selected eyes. Explicit generated selections are
+Child threads in the same family inherit their parent's hash-selected eyes. Explicit generated selections are
 saved as a versioned choice. Automatic faces need no stored selection. Both share the same renderer in the header, picker,
 and sidebar. Saved presets and custom faces remain explicit overrides. Choose
 **Use generated face** or run `bb asciimoji generate` to replace an override;
-Reset restores the automatic generated face.
+Reset restores the automatic generated face in the current project family. Generate without `--family` saves a face in the current project family.
 
 **Show activity expressions** is enabled by default and displays idle, running,
 waiting for user input, and error states. Running faces glance sideways; waiting faces use `?`

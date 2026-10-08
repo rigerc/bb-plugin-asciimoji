@@ -3,14 +3,14 @@ name: asciimoji
 description: Show or change the persistent asciimoji for a bb thread when the user asks to personalize its face.
 ---
 
-Use `bb asciimoji get`, `set '<face>'`, `shuffle`, `generate`, or `reset`.
+Use `bb asciimoji get`, `set '<face>'`, `shuffle`, `generate`, `project-default [family]`, or `reset`.
 Commands use the current thread by default; add `--thread thr_...` to select another thread.
 Add `--json` for structured output. Quote custom faces in the shell.
 
 The same controls are available by clicking the asciimoji in the thread header.
 Faces are limited to 40 characters on a single visible line. Choices sync across
 windows and survive plugin reloads and session restarts. Reset restores a stable
-face derived from the thread id. Titles and agent prompts are unaffected.
+face derived from the thread id in the project’s default family. Titles and agent prompts are unaffected.
 
 Settings are under Settings → Plugins → Asciimoji. `showHeader` defaults to true,
 `showSidebar` and `useThemeColor` to false, and `animation` to `subtle` (also `off` and `playful`).
@@ -21,7 +21,7 @@ user’s theme primary color in the header, picker, and sidebar. Colors follow
 theme changes automatically. Animations honor system reduced-motion preferences. Settings update live.
 
 `bb asciimoji generate` saves a deterministic face assembled from the thread ID.
-Child faces share the parent's hash-selected eyes. Generated faces are automatic
+Child faces in the same family share the parent's hash-selected eyes. Generated faces are automatic
 for every thread; saved presets and custom
 choices remain explicit overrides. Generate replaces an override; reset restores
 the automatic generated face.
@@ -32,3 +32,15 @@ small marker. Animation Off keeps expressions static. Motion pauses in hidden
 windows and for reduced motion. CLI output is the static saved identity, not
 live activity. Running does not distinguish thinking from tools; idle does not
 assert successful completion.
+
+
+Face families are `classic`, `bear`, `robot`, `cat`, and `minimal`. Use
+`bb asciimoji generate --family bear` to save a thread family override. Generate
+without `--family` saves the current project family. Existing saved generated
+choices retain their Classic identity.
+Use `bb asciimoji project-default` to read the target thread's project family,
+or `bb asciimoji project-default robot` to set it. Classic restores the original
+mixed-style generator. Project defaults apply to existing and new automatic
+faces; saved thread overrides stay as they are. Reset removes a thread override
+and follows the current project default. These controls also appear in the
+thread picker and sync across windows, including sidebar faces.

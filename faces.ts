@@ -13,6 +13,22 @@ export const FACES = [
   { name: 'Robot', face: '[o_o]' },
 ] as const;
 
+export const FAMILY_IDS = ['classic', 'bear', 'robot', 'cat', 'minimal'] as const;
+export type FaceFamily = typeof FAMILY_IDS[number];
+export const FACE_FAMILIES: { id: FaceFamily; name: string }[] = [
+  { id: 'classic', name: 'Classic' },
+  { id: 'bear', name: 'Bears' },
+  { id: 'robot', name: 'Robots' },
+  { id: 'cat', name: 'Cats' },
+  { id: 'minimal', name: 'Minimal' },
+];
+const familyParts = {
+  bear: { ears: ['ʕ', 'ʔ'], eyes: ['•', '^', 'o', '˘'], mouths: ['ᴥ', 'ω'] },
+  robot: { ears: ['[', ']'], eyes: ['o', '•', '°', '¬'], mouths: ['_', '−', '='] },
+  cat: { ears: ['(', ')'], eyes: ['^', '˘', '•', '='], mouths: ['ω'] },
+  minimal: { ears: ['(', ')'], eyes: ['•', '･', '˘', '·'], mouths: ['_', '‿', 'ᴗ'] },
+} as const;
+
 // Stable across processes and clients; never depends on a title or provider.
 export function defaultFace(threadId: string, parentThreadId?: string | null): string {
   return renderFace(generateFace(threadId, parentThreadId));
@@ -21,6 +37,7 @@ export function defaultFace(threadId: string, parentThreadId?: string | null): s
 export type FaceState = 'idle' | 'running' | 'waiting' | 'error';
 export interface GeneratedFace {
   version: 1;
+  family?: FaceFamily;
   ears: [string, string];
   eyes: string;
   mouth: string;
@@ -34,16 +51,20 @@ function identityHash(id: string): number {
 }
 
 /** Thread identity is deterministic; children share their parent's hash-selected eyes. */
-export function generateFace(threadId: string, parentThreadId?: string | null): GeneratedFace {
+export function generateFace(threadId: string, parentThreadId?: string | null, family: FaceFamily = 'classic'): GeneratedFace {
   const hash = identityHash(threadId);
   const eyeHash = identityHash(parentThreadId ?? threadId);
   const ears = [['(', ')'], ['ʕ', 'ʔ'], ['[', ']'], ['{', '}']] as const;
-  const pair = ears[hash % ears.length]!;
+  const parts = family === 'classic' ? undefined : familyParts[family];
+  const pair = parts?.ears ?? ears[hash % ears.length]!;
+  const eyes = parts?.eyes ?? ['•', '^', 'o', '¬'];
+  const mouths = parts?.mouths ?? ['ω', 'ᴥ', 'ᴗ', '‿'];
   return {
     version: 1,
+    ...(family !== 'classic' ? { family } : {}),
     ears: [pair[0], pair[1]],
-    eyes: ['•', '^', 'o', '¬'][(eyeHash >>> 4) % 4]!,
-    mouth: ['ω', 'ᴥ', 'ᴗ', '‿'][(hash >>> 8) % 4]!,
+    eyes: eyes[(eyeHash >>> 4) % eyes.length]!,
+    mouth: mouths[(hash >>> 8) % mouths.length]!,
     blinkOffset: (hash >>> 12) % 4000,
   };
 }

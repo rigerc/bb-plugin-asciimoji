@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakePluginHost, makeThreadResponse } from '@get-bb/plugin-sdk/testing';
 import plugin from './server.ts';
-import { defaultFace, FACES, generateFace, renderFace } from './faces.ts';
+import { defaultFace, FACES, FAMILY_IDS, generateFace, renderFace } from './faces.ts';
 
 const first = 'thr_first';
 const second = 'thr_second';
@@ -140,4 +140,76 @@ test('generated expressions keep their geometry and never alter the static ident
     assert.equal(renderFace(identity), initial);
     assert.deepEqual(generateFace(`thr_${index}`), identity);
   }
+});
+
+
+test('each family is deterministic, varied, related, and supports every activity expression', () => {
+  for (const family of FAMILY_IDS) {
+    const parent = generateFace(first, null, family);
+    const child = generateFace(second, first, family);
+    assert.deepEqual(generateFace(first, null, family), parent);
+    assert.equal(child.eyes, parent.eyes);
+    const variants = new Set(Array.from({ length: 40 }, (_, i) => renderFace(generateFace(`thr_${i}`, null, family))));
+    assert.ok(variants.size > 1, family);
+    for (const state of ['idle', 'running', 'waiting', 'error'] as const) {
+      assert.equal([...renderFace(child, { state, animation: true, elapsed: 800 })].length, 5);
+    }
+  }
+  assert.deepEqual(generateFace(first), generateFace(first, null, 'classic'));
+});
+
+test('project defaults follow authoritative project membership; overrides and legacy choices persist', async () => {
+  const result = createFakePluginHost({ pluginId: 'asciimoji', sdk: {
+    threads: { get: async ({ threadId }) => {
+      if (threadId === 'thr_missing') throw new Error('Thread not found');
+      return makeThreadResponse({ id: threadId, projectId: threadId === 'thr_other_project' ? 'proj_other' : 'proj_one' });
+    } },
+  } });
+  await plugin(result.bb);
+  let { harness } = result;
+  const read = (threadId: string) => harness.behavior.callRpc('get', { threadId }) as Promise<{face:string; custom:boolean; generated:ReturnType<typeof generateFace>}>;
+  try {
+    await result.bb.storage.kv.set(`thread:${first}`, { version: 1, kind: 'generated' });
+    await harness.behavior.callRpc('set', { threadId: 'thr_custom', face: ':-)' });
+    await harness.behavior.callRpc('generate', { threadId: 'thr_pinned', family: 'cat' });
+    await harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'bear' });
+    assert.deepEqual(await harness.behavior.callRpc('getProjectDefault', { threadId: second }), { family: 'bear' });
+    assert.deepEqual((await read(second)).generated, generateFace(second, null, 'bear'));
+    assert.equal((await read(second)).custom, false);
+    assert.equal((await read(first)).face, defaultFace(first));
+    assert.equal((await read('thr_custom')).face, ':-)');
+    assert.equal((await read('thr_pinned')).generated.family, 'cat');
+    assert.equal((await read('thr_other_project')).face, defaultFace('thr_other_project'));
+    assert.ok(harness.inspection.realtimeSignals.some(signal => signal.channel === 'changed' && (signal.payload as {projectId?:string}).projectId === 'proj_one'));
+    harness = (await harness.lifecycle.reload(plugin)).harness;
+    assert.equal((await read(second)).generated.family, 'bear');
+    assert.equal((await read('thr_new')).generated.family, 'bear');
+    await harness.behavior.callRpc('reset', { threadId: 'thr_pinned' });
+    assert.equal((await read('thr_pinned')).generated.family, 'bear');
+    assert.equal((await read('thr_pinned')).custom, false);
+    await harness.behavior.callRpc('generate', { threadId: 'thr_generated' });
+    await harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'robot' });
+    assert.equal((await read('thr_generated')).generated.family, 'bear');
+    assert.equal((await read(second)).generated.family, 'robot');
+    await assert.rejects(harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'invalid' }));
+    await assert.rejects(harness.behavior.callRpc('generate', { threadId: second, family: 'invalid' }));
+    await assert.rejects(harness.behavior.callRpc('setProjectDefault', { threadId: 'thr_missing', family: 'cat' }));
+    await assert.rejects(harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'cat', projectId: 'proj_other' }));
+    await harness.behavior.callRpc('setProjectDefault', { threadId: second, family: 'classic' });
+    assert.equal((await read(second)).face, defaultFace(second));
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test('family and project default CLI commands validate, read and save choices', async () => {
+  const { harness } = await host();
+  try {
+    const run = (args: string[]) => harness.behavior.runCli([...args, '--thread', first, '--json']);
+    assert.deepEqual(JSON.parse((await run(['project-default'])).stdout!), { family: 'classic' });
+    assert.deepEqual(JSON.parse((await run(['project-default', 'robot'])).stdout!), { family: 'robot' });
+    const generated = JSON.parse((await run(['generate', '--family', 'cat'])).stdout!);
+    assert.equal(generated.generated.family, 'cat');
+    assert.equal(JSON.parse((await run(['reset'])).stdout!).generated.family, 'robot');
+    assert.notEqual((await run(['project-default', 'bad'])).exitCode, 0);
+    assert.notEqual((await run(['generate', '--family', 'bad'])).exitCode, 0);
+  } finally { await harness.lifecycle.dispose(); }
 });

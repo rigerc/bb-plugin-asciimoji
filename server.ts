@@ -1,18 +1,20 @@
 import { randomInt } from 'node:crypto';
 import { cliCommand, defineCli, defineRpcContract, type BbPluginApi } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
-import { FACES, generateFace, renderFace } from './faces.js';
+import { FACES, FAMILY_IDS, generateFace, renderFace, type FaceFamily } from './faces.js';
 
 const threadIdSchema = z.string().regex(/^thr_[a-zA-Z0-9_-]+$/).max(128);
 export const faceSchema = z.string().trim().min(1).max(40).refine(
   value => !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value),
   'Use a single visible line without control characters.',
 );
+export const familySchema = z.enum(FAMILY_IDS);
+const projectDefaultSchema = z.object({ family: familySchema });
 const generatedSchema = z.object({
-  version: z.literal(1), ears: z.tuple([z.string().length(1), z.string().length(1)]),
+  version: z.literal(1), family: familySchema.optional(), ears: z.tuple([z.string().length(1), z.string().length(1)]),
   eyes: z.string().length(1), mouth: z.string().length(1), blinkOffset: z.number().int().min(0).max(3999),
 });
-const generatedChoice = z.object({ version: z.literal(1), kind: z.literal('generated') }).strict();
+const generatedChoice = z.object({ version: z.literal(1), kind: z.literal('generated'), family: familySchema.optional() }).strict();
 const stateSchema = z.enum(['idle', 'running', 'waiting', 'error']);
 const identitySchema = z.object({ threadId: threadIdSchema, face: faceSchema, custom: z.boolean(), generated: generatedSchema.optional() });
 const threadInput = z.object({ threadId: threadIdSchema }).strict();
@@ -21,9 +23,11 @@ export const rpcContract = defineRpcContract({
   getMany: { input: z.object({ threadIds: z.array(threadIdSchema).max(200) }).strict(), output: z.array(identitySchema) },
   set: { input: threadInput.extend({ face: faceSchema }), output: identitySchema },
   shuffle: { input: threadInput, output: identitySchema },
-  generate: { input: threadInput, output: identitySchema },
+  generate: { input: threadInput.extend({ family: familySchema.optional() }), output: identitySchema },
   activity: { input: z.object({ threadIds: z.array(threadIdSchema).max(200) }).strict(),
     output: z.array(z.object({ threadId: threadIdSchema, state: stateSchema })) },
+  getProjectDefault: { input: threadInput, output: projectDefaultSchema },
+  setProjectDefault: { input: threadInput.extend({ family: familySchema }), output: projectDefaultSchema },
   reset: { input: threadInput, output: identitySchema },
 });
 
@@ -36,13 +40,31 @@ export default function plugin(bb: BbPluginApi) {
     animation: { type: 'select', label: 'Animation style', options: ['off', 'subtle', 'playful'], default: 'subtle' },
   });
   const key = (threadId: string) => `thread:${threadId}`;
+  const projectKey = (projectId: string) => `project:${projectId}:family`;
+  async function projectFamily(projectId: string): Promise<FaceFamily> {
+    const stored = familySchema.safeParse(await bb.storage.kv.get(projectKey(projectId)));
+    return stored.success ? stored.data : 'classic';
+  }
+  async function getProjectDefault(threadId: string) {
+    const thread = await bb.sdk.threads.get({ threadId });
+    return { family: await projectFamily(thread.projectId) };
+  }
+  async function setProjectDefault(threadId: string, family: FaceFamily) {
+    const thread = await bb.sdk.threads.get({ threadId });
+    if (family === 'classic') await bb.storage.kv.delete(projectKey(thread.projectId));
+    else await bb.storage.kv.set(projectKey(thread.projectId), family);
+    bb.realtime.publish('changed', { projectId: thread.projectId });
+    return { family };
+  }
   async function get(threadId: string) {
     const thread = await bb.sdk.threads.get({ threadId });
     const value = await bb.storage.kv.get(key(threadId));
     const stored = faceSchema.safeParse(value);
     if (stored.success) return { threadId, face: stored.data, custom: true };
-    const generated = generateFace(threadId, thread.parentThreadId);
-    return { threadId, face: renderFace(generated), custom: generatedChoice.safeParse(value).success, generated };
+    const choice = generatedChoice.safeParse(value);
+    const family = choice.success ? choice.data.family ?? 'classic' : await projectFamily(thread.projectId);
+    const generated = generateFace(threadId, thread.parentThreadId, family);
+    return { threadId, face: renderFace(generated), custom: choice.success, generated };
   }
   async function set(threadId: string, value: string) {
     await bb.sdk.threads.get({ threadId });
@@ -62,9 +84,10 @@ export default function plugin(bb: BbPluginApi) {
     const choices = FACES.filter(item => item.face !== current.face);
     return set(threadId, choices[randomInt(choices.length)]!.face);
   }
-  async function generate(threadId: string) {
-    await bb.sdk.threads.get({ threadId });
-    await bb.storage.kv.set(key(threadId), { version: 1, kind: 'generated' });
+  async function generate(threadId: string, family?: FaceFamily) {
+    const thread = await bb.sdk.threads.get({ threadId });
+    const selected = family ?? await projectFamily(thread.projectId);
+    await bb.storage.kv.set(key(threadId), { version: 1, kind: 'generated', family: selected });
     bb.realtime.publish('changed', { threadId });
     return get(threadId);
   }
@@ -82,7 +105,9 @@ export default function plugin(bb: BbPluginApi) {
     bb.events.on(event, ({ thread }) => bb.realtime.publish('activity', { threadId: thread.id }));
   }
   bb.rpc.register(rpcContract, {
-    generate: ({ threadId }) => generate(threadId),
+    generate: ({ threadId, family }) => generate(threadId, family),
+    getProjectDefault: ({ threadId }) => getProjectDefault(threadId),
+    setProjectDefault: ({ threadId, family }) => setProjectDefault(threadId, family),
     activity: async ({ threadIds }) => {
       const results = await Promise.allSettled([...new Set(threadIds)].map(activity));
       return results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
@@ -121,9 +146,18 @@ export default function plugin(bb: BbPluginApi) {
       shuffle: cliCommand({ summary: 'Choose a different preset', options, async run(input, ctx) {
         return reply(await shuffle(target(input.options.thread, ctx.threadId)), input.options.json);
       } }),
-      generate: cliCommand({ summary: 'Save a deterministic generated face', options, async run(input, ctx) {
-        return reply(await generate(target(input.options.thread, ctx.threadId)), input.options.json);
+      generate: cliCommand({ summary: 'Save a deterministic generated face', options: { ...options, family: { type: 'string', description: 'classic, bear, robot, cat, or minimal' } }, async run(input, ctx) {
+        return reply(await generate(target(input.options.thread, ctx.threadId), input.options.family === undefined ? undefined : familySchema.parse(input.options.family)), input.options.json);
       } }),
+      'project-default': cliCommand({ summary: 'Show or set this thread’s project face family', options,
+        positionals: [{ name: 'family', description: 'classic, bear, robot, cat, or minimal', required: false }],
+        async run(input, ctx) {
+          const threadId = target(input.options.thread, ctx.threadId);
+          const value = input.positionals.family === undefined
+            ? await getProjectDefault(threadId)
+            : await setProjectDefault(threadId, familySchema.parse(input.positionals.family));
+          return { exitCode: 0, stdout: input.options.json ? JSON.stringify(value) : value.family };
+        } }),
       reset: cliCommand({ summary: 'Restore the automatic face', options, async run(input, ctx) {
         return reply(await reset(target(input.options.thread, ctx.threadId)), input.options.json);
       } }),
