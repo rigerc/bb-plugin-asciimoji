@@ -103,7 +103,8 @@ export function generateFaceV2(threadId: string, family: FaceFamily = 'classic',
   };
 }
 
-/** Each identity retains its glyph count across expressions; time is supplied by the caller. */
+/** Each identity retains its glyph count across expressions; time is supplied by the caller.
+ * Only the running state animates; idle, waiting and error are always static. */
 export function renderFace(identity: GeneratedFace, options: {
   state?: FaceState; elapsed?: number; animation?: boolean;
 } = {}): string {
@@ -112,6 +113,5 @@ export function renderFace(identity: GeneratedFace, options: {
   if (state === 'error') eyes = 'x';
   else if (state === 'waiting') eyes = '?';
   else if (state === 'running') eyes = animation && Math.floor(elapsed / 750) % 2 ? '>' : '<';
-  else if (animation && (elapsed + identity.blinkOffset) % 6000 < 250) eyes = '-';
   return `${identity.ears[0]}${eyes}${identity.mouth}${eyes}${identity.ears[1]}${identity.accessory ?? ''}`;
 }

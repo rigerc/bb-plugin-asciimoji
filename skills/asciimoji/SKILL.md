@@ -27,7 +27,7 @@ choices remain explicit overrides. Generate replaces an override; reset restores
 the automatic generated face.
 `showActivity` is enabled by default; configure it in plugin settings or with
 `bb plugin config asciimoji set showActivity true`. Generated faces express idle,
-running, waiting, and error; custom faces and presets keep their text and show a small marker unless a custom activity expression is saved. Animation Off keeps expressions static. Motion pauses in hidden
+running, waiting, and error; custom faces and presets keep their text and show a small marker unless a custom activity expression is saved. Only running threads animate; Animation Off keeps expressions static. Motion pauses in hidden
 windows and for reduced motion. CLI output is the static saved identity, not
 live activity. Running does not distinguish thinking from tools; idle does not
 assert successful completion.

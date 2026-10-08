@@ -85,7 +85,8 @@ Open **Settings → Plugins → Asciimoji** to configure:
 - **Show activity expressions** — enabled by default.
 - **Animation style** — Off, Subtle (default), or Playful.
 
-Subtle animates face changes and hover; Playful adds a gentle bob. Motion pauses
+Subtle animates face changes and hover on working threads; Playful adds a gentle
+bob while a thread is working. Idle, waiting, and error faces stay still. Motion pauses
 in hidden windows and respects system reduced-motion preferences. Settings
 update live. Long sidebar faces truncate; hover to see their complete saved text.
 

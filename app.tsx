@@ -19,12 +19,13 @@ function usePreferences() {
 function Face({ face, generated, expressions, state, animation, useThemeColor, sidebar = false }: {
   face: string; generated?: GeneratedFace; expressions?: FaceExpressions; state?: FaceState; animation: string; useThemeColor: boolean; sidebar?: boolean;
 }) {
-  const elapsed = useFaceClock(!!generated && state !== undefined && animation !== 'off');
+  const isWorking = state === 'running';
+  const elapsed = useFaceClock(!!generated && isWorking && animation !== 'off');
   const displayed = generated && state !== undefined
-    ? renderFace(generated, { state, elapsed, animation: animation !== 'off' && elapsed > 0 })
+    ? renderFace(generated, { state, elapsed, animation: isWorking && animation !== 'off' && elapsed > 0 })
     : state && state !== 'idle' ? expressions?.[state] ?? face : face;
   return <span key={face} className={`asciimoji-face${useThemeColor ? ' text-primary' : ''}${sidebar ? ' asciimoji-sidebar-face' : ''}`}
-    data-motion={animation} title={state ? `Activity: ${state}` : undefined}>
+    data-motion={animation} data-activity={state ?? 'none'} title={state ? `Activity: ${state}` : undefined}>
     {displayed}{!generated && state && !(state !== 'idle' && expressions?.[state]) && <span className="asciimoji-activity" aria-label={`Activity: ${state}`}>
       {state === 'running' ? '·' : state === 'waiting' ? '?' : state === 'error' ? '!' : ''}
     </span>}
