@@ -21,7 +21,7 @@ const savedFaceSchema = z.object({ face: faceSchema, expressions: expressionsSch
 const customChoice = savedFaceSchema.extend({ version: z.literal(2), kind: z.literal('custom') }).strict();
 const librarySchema = z.object({ favorites: z.array(savedFaceSchema).max(50), recent: z.array(savedFaceSchema).max(20) });
 const stateSchema = z.enum(['idle', 'running', 'waiting', 'error']);
-const identitySchema = z.object({ threadId: threadIdSchema, projectId: z.string(), face: faceSchema, custom: z.boolean(),
+const identitySchema = z.object({ threadId: threadIdSchema, projectId: z.string(), parentThreadId: threadIdSchema.optional(), face: faceSchema, custom: z.boolean(),
   source: z.enum(['automatic', 'generated', 'preset', 'custom']), generated: generatedSchema.optional(), expressions: expressionsSchema.optional() });
 export type Identity = z.infer<typeof identitySchema>;
 export type LibraryFace = z.infer<typeof savedFaceSchema>;
@@ -142,7 +142,10 @@ export default function plugin(bb: BbPluginApi) {
     const value = await bb.storage.kv.get(key(threadId));
     const stored = faceSchema.safeParse(value);
     const custom = customChoice.safeParse(value);
-    const base = { threadId, projectId: thread.projectId };
+    const base = { threadId, projectId: thread.projectId,
+      // Parentage belongs to the thread, not its saved/generated face choice.
+      ...(thread.parentThreadId && thread.parentThreadId !== threadId && threadIdSchema.safeParse(thread.parentThreadId).success
+        ? { parentThreadId: thread.parentThreadId } : {}) };
     if (stored.success || custom.success) {
       const face = custom.success ? custom.data.face : stored.data!;
       const expressions = custom.success ? custom.data.expressions : undefined;

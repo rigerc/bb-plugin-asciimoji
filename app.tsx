@@ -20,18 +20,23 @@ export function usePreferences() {
   return { showActivity: values?.showActivity !== false, showHeader: values?.showHeader !== false, showSidebar: values?.showSidebar === true, useThemeColor: values?.useThemeColor === true,
     animation: values?.animation === 'off' || values?.animation === 'playful' ? values.animation : 'subtle', sidebarWidth, activityStyle, defaultFamily };
 }
-export function Face({ face, generated, expressions, state, animation, useThemeColor, sidebar = false, activityStyle = 'expressions', sidebarWidth = 'standard' }: {
+export function Face({ face, generated, expressions, state, animation, useThemeColor, sidebar = false, activityStyle = 'expressions', sidebarWidth = 'standard', child = false }: {
   face: string; generated?: GeneratedFace; expressions?: FaceExpressions; state?: FaceState; animation: string; useThemeColor: boolean; sidebar?: boolean;
-  activityStyle?: ActivityStyle; sidebarWidth?: SidebarWidth;
+  activityStyle?: ActivityStyle; sidebarWidth?: SidebarWidth; child?: boolean;
 }) {
   const isWorking = state === 'running';
   const elapsed = useFaceClock(!!generated && isWorking && animation !== 'off' && activityStyle === 'expressions');
   const { displayed, marker } = resolveFaceDisplay(face, { generated, expressions, state, activityStyle, elapsed,
     animation: isWorking && animation !== 'off' && elapsed > 0 });
-  return <span key={face + activityStyle + (state ?? 'none')} className={`asciimoji-face${useThemeColor ? ' text-primary' : ''}${sidebar ? ' asciimoji-sidebar-face' : ''}`}
+  const glyph = <>{displayed}{marker && <span className="asciimoji-activity" aria-hidden="true">{marker}</span>}</>;
+  return <span key={face + activityStyle + (state ?? 'none')} className={`asciimoji-face${useThemeColor ? ' text-primary' : ''}${sidebar ? ' asciimoji-sidebar-face' : ''}${child ? ' asciimoji-child-face' : ''}`}
     data-motion={animation} data-activity={state ?? 'none'} {...(sidebar ? { 'data-sidebar-width': sidebarWidth } : {})}
-    title={face + (state && state !== 'idle' ? ` (Activity: ${state})` : '')} aria-label={face + (state && state !== 'idle' ? `, ${state}` : '')}>
-    {displayed}{marker && <span className="asciimoji-activity" aria-hidden="true">{marker}</span>}
+    title={(child ? 'Child thread: ' : '') + face + (state && state !== 'idle' ? ` (Activity: ${state})` : '')}
+    aria-label={(child ? 'Child thread, ' : '') + face + (state && state !== 'idle' ? `, ${state}` : '')}>
+    {child ? <>
+      <span className="asciimoji-child-marker" aria-hidden="true">↳</span>
+      <span className="asciimoji-child-glyph">{glyph}</span>
+    </> : glyph}
   </span>;
 }
 
@@ -272,11 +277,11 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   return <Dialog open={open} onOpenChange={changeOpen}>
     {!pickerOnly && <DialogTrigger asChild>
       <Button variant="ghost" className="h-7 max-w-40 truncate px-2 font-mono text-xs"
-        aria-label={identity ? 'Change thread asciimoji: ' + identity.face + (states[threadId] ? ', ' + states[threadId] : '')
+        aria-label={identity ? 'Change ' + (identity.parentThreadId ? 'child thread' : 'thread') + ' asciimoji: ' + identity.face + (states[threadId] ? ', ' + states[threadId] : '')
           : error ? 'Retry thread asciimoji' : 'Loading thread asciimoji'}
         onClick={event => { if (!identity) { event.preventDefault(); load(); } }}>
         {identity ? <Face face={identity.face} generated={identity.generated} expressions={identity.expressions}
-          state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
+          state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} child={!!identity.parentThreadId} />
           : error ? <span title={error}>Retry face</span> : 'Loading…'}
       </Button>
     </DialogTrigger>}
@@ -291,8 +296,11 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
         <div className="space-y-2">
           <div className="asciimoji-preview rounded-lg bg-muted p-5 text-center font-mono text-2xl" title={preview} aria-label={editing ? 'Draft asciimoji preview' : 'Current asciimoji'}>
             <Face face={preview} generated={editing ? undefined : identity.generated} expressions={previewExpressions} state={previewActivity}
-              animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
+              animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} child={!!identity.parentThreadId} />
           </div>
+          {identity.parentThreadId && <p className="text-xs text-muted-foreground" title={`Parent thread: ${identity.parentThreadId}`}>
+            <span aria-hidden="true">↳ </span><strong>Child thread.</strong> Generated faces inherit their parent's eyes when the family matches.
+          </p>}
           <p className="text-xs text-muted-foreground" role="status">
             {scopeLabel}
           </p>
@@ -305,7 +313,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
               className="h-auto flex-col gap-1 px-1 py-2" disabled={pending || !previews[item.id]}
               aria-pressed={!!identity.generated && (identity.generated.family ?? 'classic') === item.id}
               aria-label={'Keep ' + item.name + ' family'} onClick={() => void save('generate', undefined, item.id)}>
-              <span className="font-mono text-xs"><Face face={previews[item.id] ?? '…'} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} /></span>
+              <span className="font-mono text-xs"><Face face={previews[item.id] ?? '…'} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} child={!!identity.parentThreadId} /></span>
               <span className="text-xs text-muted-foreground">{item.name}</span>
             </Button>)}
           </div>
@@ -367,10 +375,10 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
             <summary className="cursor-pointer text-xs text-muted-foreground">Preview at header and sidebar size</summary>
             <div className="mt-2 flex items-center gap-3">
               <span className="max-w-40 truncate font-mono text-xs" aria-label="Header size preview" title={preview}>
-                <Face face={preview} expressions={previewExpressions} state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
+                <Face face={preview} expressions={previewExpressions} state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} child={!!identity.parentThreadId} />
               </span>
               <span aria-label="Sidebar size preview" title={preview}><Face face={preview} expressions={previewExpressions}
-                state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} /></span>
+                state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} child={!!identity.parentThreadId} /></span>
             </div>
           </details>
         </form>
@@ -481,7 +489,7 @@ function SidebarFaces() {
   if (!preferences.showSidebar) return null;
   return <>{targets.map(({ threadId, element }, index) => {
     const cached = faces[threadId];
-    const label = cached ? `Change sidebar asciimoji ${cached.face} for ${threadId}${states[threadId] ? ', ' + states[threadId] : ''}`
+    const label = cached ? `Change sidebar asciimoji ${cached.face} for ${threadId}${cached.parentThreadId ? ', child thread' : ''}${states[threadId] ? ', ' + states[threadId] : ''}`
       : `Change sidebar asciimoji for ${threadId}${states[threadId] ? ', ' + states[threadId] : ''}`;
     return createPortal(
     <Button variant="ghost" className="asciimoji-sidebar-control h-auto p-0"
@@ -490,7 +498,7 @@ function SidebarFaces() {
       onClick={event => { event.preventDefault(); event.stopPropagation(); opener.current = event.currentTarget; setPickerThread(threadId); }}>
       <span title={`Thread asciimoji: ${faces[threadId]?.face ?? 'Loading…'}`}>
         <Face face={faces[threadId]?.face ?? '…'} generated={faces[threadId]?.generated} expressions={faces[threadId]?.expressions}
-          state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} />
+          state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} child={!!faces[threadId]?.parentThreadId} />
       </span>
     </Button>, element, `${threadId}:${index}`); })}
     {pickerThread && <ThreadFace key={pickerThread} threadId={pickerThread} pickerOnly onClose={() => setPickerThread(null)}

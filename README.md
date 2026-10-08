@@ -42,6 +42,11 @@ New generated faces include varied mouths and accessories so siblings remain
 distinguishable. Family previews are computed by the backend with the same
 parent information used when saving.
 
+Child threads display a small **↳** branch marker beside their face in the header,
+sidebar (when enabled), and picker. The marker also appears for saved, preset, and
+custom child faces: it represents the thread relationship, not the face style. It
+does not change the saved face text, activity expressions, or favorites.
+
 Automatic children in the same generated family use their parent's actual eyes,
 including across multiple generations. A parent with a custom/preset face or a
 different generated family does not supply eyes. Saved generated faces retain

@@ -20,3 +20,9 @@ button:hover .asciimoji-face[data-motion="subtle"][data-activity="running"], but
 .asciimoji-settings-preview-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; border: 1px solid var(--border, #e5e5e5); border-radius: 0.5rem; padding: 0.5rem 0.75rem; }
 .asciimoji-settings-preview-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
 .asciimoji-settings-preview-controls label { display: grid; gap: 0.25rem; font-size: 0.8rem; }
+
+/* A child-thread branch is UI metadata, not part of the stored asciimoji.
+   Keep the connector visible even when compact sidebar glyphs truncate. */
+.asciimoji-child-face { display: inline-flex; align-items: center; gap: .25ch; }
+.asciimoji-child-marker { flex: 0 0 auto; font-size: .85em; opacity: .65; line-height: 1; }
+.asciimoji-child-glyph { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
