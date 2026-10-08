@@ -8,7 +8,7 @@ so returning to a conversation feels familiar across sessions.
 
 Click the face to open a picker with 12 named presets. Choose a favorite,
 write your own custom asciimoji, or use Surprise me for a different preset.
-Every thread automatically gets a stable generated face. Automatic children in the same generated family share their parent's actual eyes across generations. Use automatic face removes a saved thread override.
+Every thread automatically gets a stable generated face. Child threads carry a small ↳ branch marker next to the face in the header, sidebar, and picker, including for saved faces; this marker is not stored in the face text. Automatic children in the same generated family share their parent's actual eyes across generations. Use automatic face removes a saved thread override.
 
 Choose a generated face family: Classic, Bears, Robots, Cats, or Minimal.
 Precedence is Thread override → Project override → Global default. Set **Project default**
