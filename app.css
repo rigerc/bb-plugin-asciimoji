@@ -1,0 +1,9 @@
+.asciimoji-face { display: inline-block; white-space: nowrap; transform-origin: center; }
+.asciimoji-sidebar-face { font-family: monospace; font-size: 10px; max-width: 10ch; overflow: hidden; text-overflow: ellipsis; margin-right: 6px; vertical-align: middle; }
+.asciimoji-face[data-motion="subtle"] { animation: asciimoji-arrive 220ms ease-out; }
+.asciimoji-face[data-motion="playful"] { animation: asciimoji-arrive 280ms ease-out, asciimoji-bob 6s ease-in-out 280ms infinite; }
+button:hover .asciimoji-face[data-motion="subtle"], button:hover .asciimoji-face[data-motion="playful"] { animation: asciimoji-wave 480ms ease-in-out; }
+@keyframes asciimoji-arrive { from { opacity: 0; transform: translateY(3px) scale(.9); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes asciimoji-bob { 0%, 75%, 100% { transform: translateY(0); } 82% { transform: translateY(-2px) rotate(-3deg); } 90% { transform: translateY(0) rotate(3deg); } }
+@keyframes asciimoji-wave { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-8deg); } 75% { transform: rotate(8deg); } }
+@media (prefers-reduced-motion: reduce) { .asciimoji-face[data-motion], button:hover .asciimoji-face[data-motion] { animation: none; } }
