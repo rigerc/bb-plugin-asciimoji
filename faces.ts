@@ -15,9 +15,48 @@ export const FACES = [
 
 // Stable across processes and clients; never depends on a title or provider.
 export function defaultFace(threadId: string): string {
+  return FACES[identityHash(threadId) % FACES.length]!.face;
+}
+
+export type FaceState = 'idle' | 'running' | 'waiting' | 'error';
+export interface GeneratedFace {
+  version: 1;
+  ears: [string, string];
+  eyes: string;
+  mouth: string;
+  blinkOffset: number;
+}
+
+function identityHash(id: string): number {
   let hash = 2166136261;
-  for (const character of threadId) {
-    hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
-  }
-  return FACES[(hash >>> 0) % FACES.length]!.face;
+  for (const character of id) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  return hash >>> 0;
+}
+
+/** A separate palette leaves the original twelve automatic defaults unchanged. */
+export function generateFace(threadId: string, parentThreadId?: string | null): GeneratedFace {
+  const hash = identityHash(threadId);
+  const eyeHash = identityHash(parentThreadId ?? threadId);
+  const ears = [['(', ')'], ['ʕ', 'ʔ'], ['[', ']'], ['{', '}']] as const;
+  const pair = ears[hash % ears.length]!;
+  return {
+    version: 1,
+    ears: [pair[0], pair[1]],
+    eyes: ['•', '^', 'o', '¬'][(eyeHash >>> 4) % 4]!,
+    mouth: ['ω', 'ᴥ', 'ᴗ', '‿'][(hash >>> 8) % 4]!,
+    blinkOffset: (hash >>> 12) % 4000,
+  };
+}
+
+/** All expressions retain five glyphs; time is supplied by the caller. */
+export function renderFace(identity: GeneratedFace, options: {
+  state?: FaceState; elapsed?: number; animation?: boolean;
+} = {}): string {
+  const { state = 'idle', elapsed = 0, animation = false } = options;
+  let eyes = identity.eyes;
+  if (state === 'error') eyes = 'x';
+  else if (state === 'waiting') eyes = '?';
+  else if (state === 'running') eyes = animation && Math.floor(elapsed / 750) % 2 ? '>' : '<';
+  else if (animation && (elapsed + identity.blinkOffset) % 6000 < 250) eyes = '-';
+  return `${identity.ears[0]}${eyes}${identity.mouth}${eyes}${identity.ears[1]}`;
 }

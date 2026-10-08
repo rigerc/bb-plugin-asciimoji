@@ -3,7 +3,7 @@
 Give every thread a familiar face: `ʕ•ᴥ•ʔ`, `(⌐■_■)`, or your own.
 
 Each thread gets a stable default asciimoji in its header. Click it to choose
-from 12 presets, write a custom face, pick a surprise, or restore the default.
+from 12 presets, write a custom face, pick a surprise, generate a face, or restore the default.
 Saved choices persist across sessions and sync between connected windows.
 
 ## Install
@@ -24,6 +24,7 @@ Open **Settings → Plugins → Asciimoji** to configure:
 - **Show face in thread header** — enabled by default.
 - **Show faces in sidebar** — optional, disabled by default.
 - **Use theme color** — optional, disabled by default. Colors faces with your theme’s primary color.
+- **Show activity expressions** — optional, disabled by default. Generated faces change expression with activity; presets and custom faces show a small activity marker.
 - **Animation style** — Off, Subtle (default), or Playful.
 
 Subtle animates face changes and hover; Playful adds a gentle idle bob.
@@ -35,6 +36,7 @@ and follows theme changes automatically. Hover a sidebar face to see the full te
 You can also configure them from the shell:
 
 ```sh
+bb plugin config asciimoji set showActivity true
 bb plugin config asciimoji set showSidebar true
 bb plugin config asciimoji set animation playful
 bb plugin config asciimoji set useThemeColor true
@@ -46,6 +48,7 @@ bb plugin config asciimoji set useThemeColor true
 bb asciimoji get
 bb asciimoji set 'ʕ•ᴥ•ʔ'
 bb asciimoji shuffle
+bb asciimoji generate
 bb asciimoji reset
 bb asciimoji get --thread thr_example --json
 ```
@@ -53,6 +56,28 @@ bb asciimoji get --thread thr_example --json
 Commands default to the current bb thread. Outside a thread, supply `--thread`.
 Custom faces support Unicode and are limited to 40 characters on one visible
 line. Control characters are rejected. Presets can repeat across threads.
+
+### Generated faces and activity
+
+Choose **Generate a face** in the picker or run `bb asciimoji generate`. The
+thread ID selects curated delimiters, eyes, and a mouth without model calls.
+Child threads inherit their parent's hash-selected eyes. Generated faces are
+saved as a versioned choice and share the same renderer in the header, picker,
+and sidebar. Existing automatic defaults and saved custom faces stay intact;
+Reset restores the original automatic default.
+
+Enable **Show activity expressions** to display idle, running, waiting for user
+input, and error states. Running faces glance sideways; waiting faces use `?`
+eyes and errors use `x`. Idle faces blink when animation is enabled. Presets and
+custom text stay as saved and use a separate `·`, `?`, or `!` marker. These
+states reflect BB's reported thread activity; running does not distinguish
+thinking from tool execution, and idle does not imply successful completion.
+
+Expression frames retain five glyphs. A shared animation clock pauses in hidden
+windows and for reduced motion; **Off** keeps state expressions static. Activity
+refreshes on host events and reconnection. CLI reports return the static saved
+identity, while activity is ephemeral. The activity integration also uses BB's
+experimental thread-events listener to refresh after interaction resolution.
 
 Faces live in plugin-owned bb storage. Deleting a thread removes its saved
 face. Thread titles and agent prompts remain as you wrote them. No external

@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { loadPluginApp, mountPluginContentScripts, renderSlot } from '@get-bb/plugin-sdk/testing/app';
 import appDefinition from './app.js';
 import type { rpcContract } from './server.js';
+import { useFaceClock } from './hooks/useFaceClock.js';
+import { generateFace, renderFace } from './faces.js';
 import type { PluginThreadHeaderActionProps } from '@get-bb/plugin-sdk';
 
-Object.defineProperty(window, 'matchMedia', { value: vi.fn().mockImplementation(() => ({
+Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: vi.fn().mockImplementation(() => ({
   matches: false, addEventListener() {}, removeEventListener() {},
 })) });
 afterEach(cleanup);
@@ -17,6 +19,8 @@ async function mount(settings: Record<string, string | boolean> = {}) {
   const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
     settings,
     rpc: {
+      generate: ({ threadId }) => { const generated = generateFace(threadId); face = renderFace(generated); return { threadId, face, custom: true, generated }; },
+      activity: ({ threadIds }) => threadIds.map(threadId => ({ threadId, state: 'running' as const })),
       getMany: ({ threadIds }) => threadIds.map(threadId => ({ threadId, face, custom: true })),
       get: ({ threadId }: {threadId:string}) => ({ threadId, face, custom: true }),
       set: ({ threadId, face: next }: {threadId:string;face:string}) => { face = next; return { threadId, face, custom: true }; },
@@ -24,7 +28,7 @@ async function mount(settings: Record<string, string | boolean> = {}) {
       shuffle: ({ threadId }: {threadId:string}) => { face = 'ʕ•ᴥ•ʔ'; return { threadId, face, custom: true }; },
     },
   });
-  await screen.findByRole('button', { name: 'Change thread asciimoji: :-)' });
+  await screen.findByRole('button', { name: settings.showActivity ? 'Change thread asciimoji: :-), running' : 'Change thread asciimoji: :-)' });
   return { slot, update: (next: string) => { face = next; } };
 }
 
@@ -146,5 +150,82 @@ test('sidebar face reserves space beside the visible title instead of inside BB�
     slot.lifecycle.unmount();
     await scripts.lifecycle.dispose();
     wrapper.remove();
+  }
+});
+
+
+test('generated picker choice renders activity without changing the saved base face', async () => {
+  const { slot } = await mount({ showActivity: true, animation: 'off' });
+  fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :-), running' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Generate a face' }));
+  const generated = generateFace('thr_one');
+  const button = await screen.findByRole('button', { name: `Change thread asciimoji: ${renderFace(generated)}, running` });
+  expect(button.textContent).toBe(renderFace(generated, { state: 'running' }));
+  expect(slot.inspection.rpcCalls.some(call => call.method === 'generate')).toBe(true);
+  slot.lifecycle.unmount();
+});
+
+test('activity follows host notifications without changing custom text', async () => {
+  const app = await loadPluginApp(appDefinition);
+  let state: 'running' | 'waiting' | 'idle' = 'running';
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: true, animation: 'off' }, rpc: {
+      get: () => ({ threadId: 'thr_one', face: ':-)', custom: true }),
+      activity: () => [{ threadId: 'thr_one', state }],
+    },
+  });
+  const button = await screen.findByRole('button', { name: 'Change thread asciimoji: :-), running' });
+  expect(button.textContent).toBe(':-)·');
+  state = 'waiting';
+  await slot.behavior.emitRealtime('activity', { threadId: 'thr_one' });
+  await screen.findByRole('button', { name: 'Change thread asciimoji: :-), waiting' });
+  expect(button.textContent).toBe(':-)?');
+  state = 'idle';
+  await slot.behavior.emitRealtime('activity', { threadId: 'thr_one' });
+  await screen.findByRole('button', { name: 'Change thread asciimoji: :-), idle' });
+  expect(button.textContent).toBe(':-)');
+  slot.lifecycle.unmount();
+});
+
+test('one animation clock pauses for hidden windows and reduced motion and disposes on unmount', () => {
+  vi.useFakeTimers();
+  const originalMedia = window.matchMedia;
+  let reduced = false;
+  let changed: (() => void) | undefined;
+  const remove = vi.fn();
+  window.matchMedia = vi.fn(() => ({
+    get matches() { return reduced; },
+    media: '(prefers-reduced-motion: reduce)', onchange: null,
+    addListener() {}, removeListener() {}, dispatchEvent: () => true,
+    addEventListener: (_: string, callback: EventListenerOrEventListenerObject) => { changed = callback as () => void; },
+    removeEventListener: remove,
+  } as MediaQueryList));
+  function Probe() { return <span>{useFaceClock(true)}</span>; }
+  const view = render(<><Probe /><Probe /></>);
+  try {
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => vi.advanceTimersByTime(500));
+    expect(view.container.textContent).not.toBe('00');
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    expect(vi.getTimerCount()).toBe(0);
+    expect(view.container.textContent).toBe('00');
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    expect(vi.getTimerCount()).toBe(1);
+    reduced = true;
+    act(() => changed?.());
+    expect(vi.getTimerCount()).toBe(0);
+    reduced = false;
+    act(() => changed?.());
+    expect(vi.getTimerCount()).toBe(1);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(remove).toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    delete (document as unknown as { hidden?: boolean }).hidden;
+    window.matchMedia = originalMedia;
+    vi.useRealTimers();
   }
 });

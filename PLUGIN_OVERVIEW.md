@@ -8,7 +8,8 @@ so returning to a conversation feels familiar across sessions.
 
 Click the face to open a picker with 12 named presets. Choose a favorite,
 write your own custom asciimoji, or use Surprise me for a different preset.
-Reset to default returns to the thread’s automatic face.
+Generate a face creates a deterministic expression from the thread ID; child
+threads share their parent's hash-selected eyes. Reset to default returns to the thread’s automatic face.
 
 Choices are saved in bb and updates sync between connected windows. Each
 visible thread has its own control, including in split views. Custom faces
@@ -28,10 +29,16 @@ Choose Off, Subtle, or Playful animation. Subtle adds a small entrance and hover
 wave; Playful adds a gentle idle bob. System reduced-motion preferences disable
 these animations. Changes to settings take effect immediately.
 
+Enable Show activity expressions to see running, waiting, and error feedback.
+Generated faces change their eyes; presets and custom faces use a small marker.
+Generated faces blink when idle and animated. Their expression frames keep a
+stable width, and a shared clock pauses in hidden windows and for reduced motion.
+Activity is off by default and follows BB's reported state.
+
 ## Shell controls
 
 Use `bb asciimoji get`, `bb asciimoji set '<face>'`, `bb asciimoji shuffle`,
-and `bb asciimoji reset`. Commands target the current thread, with an optional
+`bb asciimoji generate`, and `bb asciimoji reset`. Commands target the current thread, with an optional
 `--thread` for another conversation and `--json` for structured output.
 
 ## Requirements

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakePluginHost, makeThreadResponse } from '@get-bb/plugin-sdk/testing';
 import plugin from './server.ts';
-import { defaultFace, FACES } from './faces.ts';
+import { defaultFace, FACES, generateFace, renderFace } from './faces.ts';
 
 const first = 'thr_first';
 const second = 'thr_second';
@@ -73,4 +73,71 @@ test('settings persist across reload and bulk lookup is bounded', async () => {
     ]);
     await assert.rejects(harness.behavior.callRpc('getMany', { threadIds: Array(201).fill(first) }));
   } finally { await harness.lifecycle.dispose(); }
+});
+
+
+test('generated choices survive reload, inherit parent eyes, and reset to the original default', async () => {
+  let { harness } = await host();
+  try {
+    const generated = await harness.behavior.callRpc('generate', { threadId: first });
+    assert.deepEqual(generated, { threadId: first, face: renderFace(generateFace(first)), custom: true, generated: generateFace(first) });
+    harness = (await harness.lifecycle.reload(plugin)).harness;
+    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), generated);
+    harness.inspection.sdk.stub('threads.get', ({ threadId }) => makeThreadResponse({ id: threadId, parentThreadId: first }));
+    const child = await harness.behavior.callRpc('generate', { threadId: second }) as { generated: { eyes: string } };
+    assert.equal(child.generated.eyes, generateFace(first).eyes);
+    const cli = await harness.behavior.runCli(['generate', '--thread', second, '--json']);
+    assert.equal(cli.exitCode, 0);
+    assert.equal(JSON.parse(cli.stdout!).generated.version, 1);
+    await harness.behavior.callRpc('set', { threadId: first, face: ':-)' });
+    assert.deepEqual(await harness.behavior.callRpc('get', { threadId: first }), { threadId: first, face: ':-)', custom: true });
+    const reset = await harness.behavior.callRpc('reset', { threadId: second });
+    assert.deepEqual(reset, { threadId: second, face: defaultFace(second), custom: false });
+    await assert.rejects(harness.behavior.callRpc('generate', { threadId: '../bad' }));
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test('activity reads current state, bounds bulk requests and publishes refresh signals', async () => {
+  const { harness } = await host();
+  try {
+    harness.inspection.sdk.stub('threads.interactions.list', () => []);
+    harness.inspection.sdk.stub('threads.get', ({ threadId }) => makeThreadResponse({ id: threadId, status: 'active' }));
+    assert.deepEqual(await harness.behavior.callRpc('activity', { threadIds: [first, first] }), [{ threadId: first, state: 'running' }]);
+    harness.inspection.sdk.stub('threads.get', ({ threadId }) => makeThreadResponse({ id: threadId, status: 'error' }));
+    assert.deepEqual(await harness.behavior.callRpc('activity', { threadIds: [first] }), [{ threadId: first, state: 'error' }]);
+    harness.inspection.sdk.stub('threads.get', ({ threadId }) => makeThreadResponse({ id: threadId, status: 'idle' }));
+    assert.deepEqual(await harness.behavior.callRpc('activity', { threadIds: [first] }), [{ threadId: first, state: 'idle' }]);
+    harness.inspection.sdk.stub('threads.interactions.list', () => [{
+      createdAt: 0, id: 'approval_test', threadId: first, turnId: 'turn_test',
+      providerId: 'codex', providerRequestId: 'request_test', providerThreadId: 'provider_test',
+      payload: { kind: 'approval', availableDecisions: ['allow_once'], reason: null,
+        subject: { kind: 'plan', itemId: 'item_test', plan: 'Run checks', planFilePath: null } },
+      resolution: null, resolvedAt: null, status: 'pending', statusReason: null,
+    }]);
+    assert.deepEqual(await harness.behavior.callRpc('activity', { threadIds: [first] }), [{ threadId: first, state: 'waiting' }]);
+    harness.inspection.sdk.stub('threads.interactions.list', () => []);
+    assert.deepEqual(await harness.behavior.callRpc('activity', { threadIds: [first] }), [{ threadId: first, state: 'idle' }]);
+    await harness.behavior.emitThreadEvent('thread.active', { thread: makeThreadResponse({ id: first, status: 'active' }) });
+    assert.ok(harness.inspection.realtimeSignals.some(signal => signal.channel === 'activity'));
+    await assert.rejects(harness.behavior.callRpc('activity', { threadIds: Array(201).fill(first) }));
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test('generated expressions keep their geometry and never alter the static identity', () => {
+  for (let index = 0; index < 200; index++) {
+    const identity = generateFace(`thr_${index}`);
+    const initial = renderFace(identity);
+    for (const state of ['idle', 'running', 'waiting', 'error'] as const) {
+      for (const elapsed of [0, 250, 750, 6000, 100000]) {
+        const frame = renderFace(identity, { state, elapsed, animation: true });
+        assert.equal([...frame].length, 5);
+        assert.equal(frame[0], initial[0]);
+        assert.equal(frame[2], initial[2]);
+        assert.equal(frame[4], initial[4]);
+      }
+      assert.equal(renderFace(identity, { state, elapsed: 1000 }), renderFace(identity, { state }));
+    }
+    assert.equal(renderFace(identity), initial);
+    assert.deepEqual(generateFace(`thr_${index}`), identity);
+  }
 });

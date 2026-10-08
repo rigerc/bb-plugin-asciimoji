@@ -7,3 +7,4 @@ button:hover .asciimoji-face[data-motion="subtle"], button:hover .asciimoji-face
 @keyframes asciimoji-bob { 0%, 75%, 100% { transform: translateY(0); } 82% { transform: translateY(-2px) rotate(-3deg); } 90% { transform: translateY(0) rotate(3deg); } }
 @keyframes asciimoji-wave { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-8deg); } 75% { transform: rotate(8deg); } }
 @media (prefers-reduced-motion: reduce) { .asciimoji-face[data-motion], button:hover .asciimoji-face[data-motion] { animation: none; } }
+.asciimoji-activity { display: inline-block; width: 1ch; margin-left: .3ch; text-align: center; }
