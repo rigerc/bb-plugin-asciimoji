@@ -374,12 +374,12 @@ test('favorites update live and reuse their activity expressions', async () => {
   try {
     fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :D' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Favorite current face' }));
-    await screen.findByRole('button', { name: 'Reuse favorite: :D' });
+    await screen.findByRole('button', { name: 'Reuse favorite: :D (waiting :?)' });
     favorites = [{ face: ':-)', expressions: { waiting: ':?' } }];
     await slot.behavior.emitRealtime('library', {});
-    expect(await screen.findByRole('button', { name: 'Reuse favorite: :-)' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Reuse favorite: :D' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Reuse favorite: :-)' }));
+    expect(await screen.findByRole('button', { name: 'Reuse favorite: :-) (waiting :?)' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Reuse favorite: :D (waiting :?)' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Reuse favorite: :-) (waiting :?)' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(applied).toEqual({ threadId: 'thr_one', face: ':-)', expressions: { waiting: ':?' } });
   } finally { slot.lifecycle.unmount(); }
@@ -469,4 +469,97 @@ test('header and 100 sidebar faces share a read and refresh only the changed thr
     await waitFor(() => expect(activity).toHaveBeenCalledTimes(3));
     expect(activity.mock.calls[2]![0]).toEqual({ threadIds: ['thr_one'] });
   } finally { header.lifecycle.unmount(); sidebar.lifecycle.unmount(); await scripts.lifecycle.dispose(); wrapper.remove(); }
+});
+
+test('mounted automatic child refreshes when its parent changes', async () => {
+  const app = await loadPluginApp(appDefinition);
+  let face = '(•ω•)';
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_child', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false },
+    rpc: { get: () => ({ threadId: 'thr_child', face, custom: false, projectId: 'proj_personal', source: 'automatic' as const }) },
+  });
+  try {
+    await screen.findByRole('button', { name: 'Change thread asciimoji: (•ω•)' });
+    face = '(^ω^)';
+    await slot.behavior.emitRealtime('changed', { threadId: 'thr_parent', affectedThreadIds: ['thr_child'] });
+    await screen.findByRole('button', { name: 'Change thread asciimoji: (^ω^)' });
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('sidebar refreshes only the changed thread and ignores other projects', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const wrapper = document.createElement('div');
+  for (const id of ['thr_one', 'thr_two']) {
+    const row = document.createElement('div');
+    row.dataset.sidebarThreadShortcutTarget = '';
+    row.dataset.sidebarThreadId = id;
+    row.textContent = id;
+    wrapper.append(row);
+  }
+  document.body.append(wrapper);
+  const scripts = await mountPluginContentScripts(app, { pluginId: 'asciimoji' });
+  const faces: Record<string, string> = { thr_one: ':-)', thr_two: ':-)' };
+  const getMany = vi.fn((input: unknown) => (input as { threadIds: string[] }).threadIds.map(threadId => ({
+    threadId, face: faces[threadId]!, custom: true, projectId: threadId === 'thr_one' ? 'proj_one' : 'proj_two', source: 'custom' as const,
+  })));
+  const get = vi.fn((input: unknown) => {
+    const { threadId } = input as { threadId: string };
+    return { threadId, face: faces[threadId]!, custom: true, projectId: threadId === 'thr_one' ? 'proj_one' : 'proj_two', source: 'custom' as const };
+  });
+  const slot = renderSlot(app.appOverlays[0]!, {}, {
+    settings: { showSidebar: true, showActivity: false, animation: 'off' },
+    rpc: { getMany, get, activity: () => [] },
+  });
+  try {
+    await waitFor(() => expect(getMany).toHaveBeenCalledTimes(1));
+    faces['thr_one'] = '[o_o]';
+    await slot.behavior.emitRealtime('changed', { threadId: 'thr_one' });
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    expect(get).toHaveBeenCalledWith({ threadId: 'thr_one' });
+    expect(getMany).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(wrapper.textContent).toContain('[o_o]'));
+    // A project-default change for an unrepresented project must not refetch.
+    await slot.behavior.emitRealtime('changed', { projectId: 'proj_other' });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(getMany).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledTimes(1);
+  } finally { slot.lifecycle.unmount(); await scripts.lifecycle.dispose(); wrapper.remove(); }
+});
+
+test('favorites with identical text remain distinguishable', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false }, rpc: {
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', face: ':D', custom: true }),
+      getLibrary: () => ({ favorites: [{ face: ':-)' }, { face: ':-)', expressions: { running: ':D' } }], recent: [] }),
+      favorite: () => ({ favorites: [], recent: [] }),
+      set: (input: unknown) => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'custom', custom: true, ...input as { face: string } }),
+      getProjectDefault: () => ({ family: 'classic' }),
+      previews: () => [],
+    },
+  });
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :D' }));
+    expect(await screen.findByRole('button', { name: 'Reuse favorite: :-)' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Reuse favorite: :-) (running :D)' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Remove favorite: :-)' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Remove favorite: :-) (running :D)' })).toBeTruthy();
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('legacy classic faces are not relabeled with the project default family', async () => {
+  const app = await loadPluginApp(appDefinition);
+  const legacy = { version: 1 as const, ears: ['(', ')'] as [string, string], eyes: '•', mouth: 'ω', blinkOffset: 0 };
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false }, rpc: {
+      get: () => ({ threadId: 'thr_one', projectId: 'proj_personal', source: 'generated' as const, face: '(•ω•)', custom: true, generated: legacy }),
+      getProjectDefault: () => ({ family: 'robot' as const }),
+      previews: () => [],
+      getLibrary: () => ({ favorites: [], recent: [] }),
+    },
+  });
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: (•ω•)' }));
+    expect(await screen.findByText('Saved for this thread: Classic')).toBeTruthy();
+  } finally { slot.lifecycle.unmount(); }
 });

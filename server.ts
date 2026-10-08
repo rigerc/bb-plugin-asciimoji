@@ -67,6 +67,44 @@ export default function plugin(bb: BbPluginApi) {
     bb.realtime.publish('changed', { projectId: thread.projectId });
     return { family };
   }
+  /** Automatic children inherit their parent's eyes, so a parent change can alter
+   * their derived faces. Collect automatic descendants for targeted invalidation.
+   * Traversal stops at pinned/custom threads: their frozen faces block propagation
+   * to deeper generations (legacy v1 children hash the parent id, not its eyes,
+   * so they are also unaffected and excluded via their stored value). */
+  async function findAutomaticDescendants(rootId: string): Promise<string[]> {
+    const seen = new Set<string>([rootId]);
+    const queue = [rootId];
+    const affected: string[] = [];
+    for (let depth = 0; depth < 64 && queue.length > 0; depth++) {
+      const parentId = queue.shift()!;
+      let children: Array<{ id?: unknown }> = [];
+      try {
+        const list = await (bb.sdk.threads as { list?: (args: unknown) => Promise<unknown> }).list?.({ parentThreadId: parentId });
+        children = Array.isArray(list) ? list as Array<{ id?: unknown }> : [];
+      } catch { break; }
+      for (const child of children) {
+        if (typeof child?.id !== 'string' || seen.has(child.id)) continue;
+        seen.add(child.id);
+        let stored: unknown;
+        try { stored = await bb.storage.kv.get(key(child.id)); }
+        catch { continue; }
+        // Any stored value (preset text, custom map, pinned v2, legacy v1)
+        // freezes the face, so it neither changes nor propagates further.
+        if (stored !== null && stored !== undefined) continue;
+        affected.push(child.id);
+        queue.push(child.id);
+        if (affected.length >= 200) return affected;
+      }
+    }
+    return affected;
+  }
+  async function notifyChanged(threadId: string) {
+    let affected: string[] = [];
+    try { affected = await findAutomaticDescendants(threadId); }
+    catch { affected = []; }
+    bb.realtime.publish('changed', affected.length ? { threadId, affectedThreadIds: affected } : { threadId });
+  }
   async function buildIdentity(threadId: string, family: FaceFamily, seed = 0, ancestors = new Set<string>()): Promise<GeneratedFace> {
     const thread = await bb.sdk.threads.get({ threadId });
     let inheritedEyes: string | undefined;
@@ -129,14 +167,14 @@ export default function plugin(bb: BbPluginApi) {
     const entry = savedFaceSchema.parse({ face: value, ...(expressions ? { expressions } : {}) });
     const mapped = Object.values(entry.expressions ?? {}).some(Boolean);
     await bb.storage.kv.set(key(threadId), mapped ? { version: 2, kind: 'custom', ...entry } : entry.face);
-    bb.realtime.publish('changed', { threadId });
+    await notifyChanged(threadId);
     await remember(mapped ? entry : { face: entry.face });
     return get(threadId);
   }
   async function reset(threadId: string) {
     await bb.sdk.threads.get({ threadId });
     await bb.storage.kv.delete(key(threadId));
-    bb.realtime.publish('changed', { threadId });
+    await notifyChanged(threadId);
     return get(threadId);
   }
   async function shuffle(threadId: string) {
@@ -151,7 +189,7 @@ export default function plugin(bb: BbPluginApi) {
   }
   async function saveGenerated(threadId: string, identity: GeneratedFace, seed: number) {
     await bb.storage.kv.set(key(threadId), generatedChoice.parse({ version: 2, kind: 'generated', identity, seed }));
-    bb.realtime.publish('changed', { threadId });
+    await notifyChanged(threadId);
     await remember({ face: renderFace(identity) });
     return get(threadId);
   }

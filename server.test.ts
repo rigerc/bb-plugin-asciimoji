@@ -330,3 +330,36 @@ test('v2 expression frames keep their geometry while increasing family variety',
     assert.ok(siblings.size >= 40, family + ' has enough sibling variations');
   }
 });
+
+test('parent changes invalidate automatic children but stop at pinned threads', async () => {
+  const result = createFakePluginHost({ pluginId: 'asciimoji', sdk: {
+    threads: {
+      get: ({ threadId }: { threadId: string }) => makeThreadResponse({
+        id: threadId,
+        parentThreadId: threadId === 'thr_child' ? 'thr_parent' : threadId === 'thr_grandchild' ? 'thr_child' : null,
+      }),
+      list: (args?: { parentThreadId?: string }) => {
+        if (args?.parentThreadId === 'thr_parent') return [makeThreadResponse({ id: 'thr_child', parentThreadId: 'thr_parent' })];
+        if (args?.parentThreadId === 'thr_child') return [makeThreadResponse({ id: 'thr_grandchild', parentThreadId: 'thr_child' })];
+        return [];
+      },
+    },
+  } });
+  await plugin(result.bb);
+  const { harness } = result;
+  try {
+    const changedSignals = () => harness.inspection.realtimeSignals.filter(signal => signal.channel === 'changed');
+    // Both child and grandchild start automatic, so a parent save must list them.
+    await harness.behavior.callRpc('generate', { threadId: 'thr_parent', family: 'cat' });
+    const first = changedSignals().at(-1)?.payload as { threadId?: string; affectedThreadIds?: string[] };
+    assert.equal(first?.threadId, 'thr_parent');
+    assert.ok(first?.affectedThreadIds?.includes('thr_child'), 'automatic child is invalidated');
+    assert.ok(first?.affectedThreadIds?.includes('thr_grandchild'), 'transitive automatic grandchild is invalidated');
+    // Pinning the child freezes its face and blocks propagation to its own children.
+    await harness.behavior.callRpc('set', { threadId: 'thr_child', face: ':-)' });
+    await harness.behavior.callRpc('generate', { threadId: 'thr_parent', family: 'bear' });
+    const second = changedSignals().at(-1)?.payload as { threadId?: string; affectedThreadIds?: string[] };
+    assert.equal(second?.threadId, 'thr_parent');
+    assert.deepEqual(second?.affectedThreadIds ?? [], [], 'pinned child blocks descendant invalidation');
+  } finally { await harness.lifecycle.dispose(); }
+});

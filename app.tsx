@@ -95,6 +95,17 @@ function FaceLibrary({ identity, disabled, onApply }: {
   useEffect(() => { load(); return () => { revision.current++; }; }, [load, connection]);
   useRealtime('library', load);
   const entryKey = (entry: LibraryFace) => JSON.stringify([entry.face, entry.expressions?.running, entry.expressions?.waiting, entry.expressions?.error]);
+  const describeExpressions = (entry: LibraryFace) => {
+    const parts: string[] = [];
+    if (entry.expressions?.running) parts.push('running ' + entry.expressions.running);
+    if (entry.expressions?.waiting) parts.push('waiting ' + entry.expressions.waiting);
+    if (entry.expressions?.error) parts.push('error ' + entry.expressions.error);
+    return parts.join(', ');
+  };
+  const entryLabel = (entry: LibraryFace) => {
+    const detail = describeExpressions(entry);
+    return detail ? entry.face + ' (' + detail + ')' : entry.face;
+  };
   const current: LibraryFace = { face: identity.face, ...(identity.expressions ? { expressions: identity.expressions } : {}) };
   const saved = !!library?.favorites.some(item => entryKey(item) === entryKey(current));
   async function favorite(entry: LibraryFace, saved: boolean) {
@@ -121,8 +132,8 @@ function FaceLibrary({ identity, disabled, onApply }: {
       <div className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto">
         {library.favorites.map(entry => <div className="flex min-w-0 gap-1" key={entryKey(entry)}>
           <Button variant="outline" className="min-w-0 flex-1 truncate font-mono text-xs"
-            disabled={disabled || pending} aria-label={'Reuse favorite: ' + entry.face} onClick={() => onApply(entry)}><span className="truncate" title={entry.face}>{entry.face}</span></Button>
-          <Button variant="ghost" disabled={disabled || pending} aria-label={'Remove favorite: ' + entry.face}
+            disabled={disabled || pending} aria-label={'Reuse favorite: ' + entryLabel(entry)} onClick={() => onApply(entry)}><span className="truncate" title={entryLabel(entry)}>{entry.face}{describeExpressions(entry) ? <span className="ml-1 text-[10px] text-muted-foreground">▸ {entry.expressions?.running ?? entry.expressions?.waiting ?? entry.expressions?.error}</span> : null}</span></Button>
+          <Button variant="ghost" disabled={disabled || pending} aria-label={'Remove favorite: ' + entryLabel(entry)}
             onClick={() => void favorite(entry, false)}>×</Button>
         </div>)}
       </div>
@@ -131,8 +142,8 @@ function FaceLibrary({ identity, disabled, onApply }: {
         <summary className="cursor-pointer text-sm">Recent faces</summary>
         <div className="mt-2 grid max-h-40 grid-cols-3 gap-2 overflow-y-auto">
           {library.recent.map(entry => <Button key={entryKey(entry)} variant="outline" className="truncate font-mono text-xs"
-            disabled={disabled || pending} aria-label={'Reuse recent: ' + entry.face}
-            onClick={() => onApply(entry)}><span className="truncate" title={entry.face}>{entry.face}</span></Button>)}
+            disabled={disabled || pending} aria-label={'Reuse recent: ' + entryLabel(entry)}
+            onClick={() => onApply(entry)}><span className="truncate" title={entryLabel(entry)}>{entry.face}{describeExpressions(entry) ? <span className="ml-1 text-[10px] text-muted-foreground">▸ {entry.expressions?.running ?? entry.expressions?.waiting ?? entry.expressions?.error}</span> : null}</span></Button>)}
         </div>
       </details>}
     </>}
@@ -192,8 +203,16 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   }, [open, identity, editing]);
   useRealtime('changed', payload => {
     if (!visible || !payload || typeof payload !== 'object') return;
-    if (('threadId' in payload && payload.threadId === threadId) ||
-        ('projectId' in payload && payload.projectId === identity?.projectId)) load();
+    const ids = new Set<string>();
+    if ('threadId' in payload && typeof payload.threadId === 'string') ids.add(payload.threadId);
+    if ('affectedThreadIds' in payload && Array.isArray(payload.affectedThreadIds)) {
+      for (const id of payload.affectedThreadIds) if (typeof id === 'string') ids.add(id);
+    }
+    if ('threadIds' in payload && Array.isArray(payload.threadIds)) {
+      for (const id of payload.threadIds) if (typeof id === 'string') ids.add(id);
+    }
+    if (ids.has(threadId) ||
+        ('projectId' in payload && typeof payload.projectId === 'string' && payload.projectId === identity?.projectId)) load();
     // A parent override can change the authoritative previews without changing a pinned child.
     if (open) loadPreviews();
   });
@@ -224,7 +243,8 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   const preview = editing ? draft : identity?.face ?? '';
   const previewExpressions = editing ? expressions : identity?.expressions;
   const previewActivity = editing ? previewState : states[threadId];
-  const familyName = FACE_FAMILIES.find(item => item.id === (identity?.generated?.family ?? family))?.name ?? 'project default';
+  const selectedFamily = identity?.generated ? (identity.generated.family ?? 'classic') : family;
+  const familyName = FACE_FAMILIES.find(item => item.id === selectedFamily)?.name ?? 'project default';
   if (!visible) return null;
   return <Dialog open={open} onOpenChange={changeOpen}>
     {!pickerOnly && <DialogTrigger asChild>
@@ -356,6 +376,16 @@ function SidebarFaces() {
   const states = useActivity([...new Set(targets.map(target => target.threadId))], preferences.showActivity && preferences.showSidebar);
   const ids = JSON.stringify([...new Set(targets.map(target => target.threadId))]);
   const revision = useRef(0);
+  const facesRef = useRef(faces);
+  useEffect(() => { facesRef.current = faces; }, [faces]);
+  // Drop cached faces for sidebar rows that have disappeared so targeted merges cannot leak entries.
+  useEffect(() => {
+    const valid = new Set(targets.map(target => target.threadId));
+    setFaces(previous => {
+      if (Object.keys(previous).every(id => valid.has(id))) return previous;
+      return Object.fromEntries(Object.entries(previous).filter(([id]) => valid.has(id)));
+    });
+  }, [targets]);
   useEffect(() => {
     enableSidebar(preferences.showSidebar);
     if (!preferences.showSidebar) setPickerThread(null);
@@ -374,8 +404,48 @@ function SidebarFaces() {
     }, () => { /* Keep existing faces if a connection is temporarily unavailable. */ });
   }, [rpc, ids, preferences.showSidebar]);
   useEffect(() => { load(); return () => { revision.current++; }; }, [load, connection]);
+  const loadSome = useCallback((threadIds: string[]) => {
+    const unique = [...new Set(threadIds)];
+    if (!unique.length || !preferences.showSidebar) return;
+    const batches = [];
+    for (let index = 0; index < unique.length; index += 200) {
+      batches.push(rpc.call('getMany', { threadIds: unique.slice(index, index + 200) }));
+    }
+    void Promise.all(batches).then(results => {
+      const items = results.flat();
+      setFaces(previous => ({ ...previous, ...Object.fromEntries(items.map(item => [item.threadId, item])) }));
+    }, () => { /* Keep existing faces if a connection is temporarily unavailable. */ });
+  }, [rpc, preferences.showSidebar]);
+  const loadOne = useCallback((threadId: string) => {
+    if (!preferences.showSidebar) return;
+    void rpc.call('get', { threadId }).then(value => {
+      setFaces(previous => ({ ...previous, [threadId]: value }));
+    }, () => { /* Keep the existing face if a connection is temporarily unavailable. */ });
+  }, [rpc, preferences.showSidebar]);
   useRealtime('changed', payload => {
-    if (payload && typeof payload === 'object' && (('threadId' in payload && targets.some(target => target.threadId === payload.threadId)) || 'projectId' in payload)) load();
+    if (!payload || typeof payload !== 'object') return;
+    const visible = new Set(targets.map(target => target.threadId));
+    const ids: string[] = [];
+    if ('threadId' in payload && typeof payload.threadId === 'string' && visible.has(payload.threadId)) ids.push(payload.threadId);
+    if ('affectedThreadIds' in payload && Array.isArray(payload.affectedThreadIds)) {
+      for (const id of payload.affectedThreadIds) if (typeof id === 'string' && visible.has(id)) ids.push(id);
+    }
+    if ('threadIds' in payload && Array.isArray(payload.threadIds)) {
+      for (const id of payload.threadIds) if (typeof id === 'string' && visible.has(id)) ids.push(id);
+    }
+    if (ids.length) {
+      if (ids.length === 1) loadOne(ids[0]!);
+      else void loadSome([...new Set(ids)]);
+      return;
+    }
+    if ('projectId' in payload && typeof payload.projectId === 'string') {
+      const relevant = [...visible].filter(id => {
+        const cached = facesRef.current[id];
+        return !cached || cached.projectId === payload.projectId;
+      });
+      if (!relevant.length) return;
+      void loadSome(relevant);
+    }
   });
   if (!preferences.showSidebar) return null;
   return <>{targets.map(({ threadId, element }, index) => createPortal(
