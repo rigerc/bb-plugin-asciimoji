@@ -486,9 +486,10 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   }
   const draftError = faceValidationError(draft);
   const expressionError = Object.values(expressions).map(faceValidationError).find(Boolean);
-  const preview = editing ? draft : identity?.face ?? '';
-  const previewExpressions = editing ? expressions : identity?.expressions;
-  const previewActivity = editing ? previewState : states[threadId];
+  const showDraft = pickerTab === 'custom' && editing;
+  const preview = showDraft ? draft : identity?.face ?? '';
+  const previewExpressions = showDraft ? expressions : identity?.expressions;
+  const previewActivity = showDraft ? previewState : states[threadId];
   const selectedFamily = identity?.generated ? (identity.generated.family ?? 'classic') : projectInfo?.family;
   const familyName = FACE_FAMILIES.find(item => item.id === selectedFamily)?.name ?? 'project default';
   const scopeLabel = identity?.source === 'automatic'
@@ -521,13 +522,13 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
         {error && <Button variant="outline" onClick={load}>Retry face</Button>}</div> : <>
         <div className="asciimoji-picker-current-row">
           <div className="asciimoji-preview asciimoji-picker-current" title={preview}
-            aria-label={editing ? 'Draft asciimoji preview' : 'Current asciimoji'}>
-            <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile}
+            aria-label={showDraft ? 'Draft asciimoji preview' : 'Current asciimoji'}>
+            <Face face={preview} generated={showDraft ? undefined : identity.generated} glyphProfile={showDraft ? 'unicode' : identity.glyphProfile}
               expressions={previewExpressions} state={previewActivity} animation={preferences.animation}
               useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
           </div>
           <div className="asciimoji-picker-current-label">
-            <span>{editing ? 'Unsaved draft' : 'Current face'}</span>
+            <span>{showDraft ? 'Unsaved draft' : 'Current face'}</span>
             <p role="status" title={scopeLabel}>{scopeLabel}</p>
           </div>
         </div>
