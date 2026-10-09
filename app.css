@@ -46,6 +46,7 @@ button:hover .asciimoji-face[data-motion="subtle"][data-activity="running"], but
   letter-spacing: .17em;
   color: var(--muted-foreground, #777);
 }
+.asciimoji-picker-loading { padding: 28px 30px; }
 .asciimoji-picker-layout {
   display: grid;
   grid-template-columns: minmax(230px, .8fr) minmax(0, 1.7fr);
