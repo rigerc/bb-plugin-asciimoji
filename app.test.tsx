@@ -906,6 +906,7 @@ test('ASCII drafts stay printable and settings preview contains printable ASCII'
   const { slot } = await mount();
   try {
     fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    selectPickerTab('Characters');
     fireEvent.change(await screen.findByRole('combobox', { name: 'Character glyph profile' }), { target: { value: 'ascii' } });
     await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'previews' && (call.input as { glyphProfile?: string }).glyphProfile === 'ascii')).toBe(true));
     expect(slot.inspection.rpcCalls.some(call => call.method === 'generate')).toBe(false);
@@ -961,6 +962,7 @@ test('library fallback polls only while visible and stops when picker closes', a
   vi.useFakeTimers();
   try {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' })); });
+    await act(async () => { selectPickerTab('Saved'); });
     const count = () => slot.inspection.rpcCalls.filter(call => call.method === 'getLibrary').length;
     const initial = count();
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
