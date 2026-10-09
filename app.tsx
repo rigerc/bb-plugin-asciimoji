@@ -516,7 +516,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
         <DialogTitle>Choose your asciimoji</DialogTitle>
         <DialogDescription>Give this thread a little personality. Pick a character, use a classic, or make your own.</DialogDescription>
       </DialogHeader>
-      {!identity ? <div><p role={error ? 'alert' : 'status'}>{error ?? 'Loading face…'}</p>
+      {!identity ? <div className="asciimoji-picker-loading"><p role={error ? 'alert' : 'status'}>{error ?? 'Loading face…'}</p>
         {error && <Button variant="outline" onClick={load}>Retry face</Button>}</div> : <>
         <div className="asciimoji-picker-layout">
           <aside className="asciimoji-picker-preview-panel" aria-label="Selected face preview">
@@ -604,6 +604,10 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
               <FaceLibrary identity={identity} disabled={pending} onApply={entry => void save('set', entry)} onCharacterApply={value => { setIdentity(value); changeOpen(false); }} />
             </section>
             <section className="asciimoji-picker-section" aria-label="Custom face editor">
+              <div className="asciimoji-picker-section-heading">
+                <div><h3>Make it your own</h3><p>Write a custom face and optionally define its activity expressions.</p></div>
+                <span className="asciimoji-picker-section-number">04</span>
+              </div>
               <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!draftError && !expressionError) void save('set'); }}>
           <label htmlFor={'asciimoji-custom-' + threadId} className="text-sm font-medium">Custom face</label>
           <div className="flex gap-2">
