@@ -965,3 +965,19 @@ test('library fallback polls only while visible and stops when picker closes', a
     vi.useRealTimers();
   }
 });
+
+
+test('picker preset search filters faces and displays an empty state', async () => {
+  const { slot } = await mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+  await screen.findByRole('dialog');
+  expect(screen.getByLabelText('Current asciimoji')).toBeTruthy();
+  const search = screen.getByRole('textbox', { name: 'Search preset faces' });
+  fireEvent.change(search, { target: { value: 'bear' } });
+  expect(screen.getByRole('button', { name: 'Choose Bear: ʕ•ᴥ•ʔ' })).toBeTruthy();
+  expect(screen.getAllByRole('button', { name: /^Choose / })).toHaveLength(1);
+  fireEvent.change(search, { target: { value: 'no-such-asciimoji' } });
+  expect(screen.queryByRole('button', { name: /^Choose / })).toBeNull();
+  expect(screen.getByText(/No faces match/)).toBeTruthy();
+  slot.lifecycle.unmount();
+});
