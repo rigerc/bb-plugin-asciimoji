@@ -406,6 +406,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   const [glyphProfile, setGlyphProfile] = useState<'unicode' | 'ascii'>('unicode');
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [presetQuery, setPresetQuery] = useState('');
+  const [pickerTab, setPickerTab] = useState<'presets' | 'characters' | 'custom' | 'saved'>('presets');
   const [projectDefaultsOpen, setProjectDefaultsOpen] = useState(false);
   const galleryTrigger = useRef<HTMLButtonElement>(null);
   const [projectInfo, setProjectInfo] = useState<ProjectDefaultInfo | null>(null);
@@ -463,7 +464,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   });
   const changeOpen = (value: boolean) => {
     setOpen(value);
-    if (value) { setEditing(false); setPreviewState('idle'); setGlyphProfile(identity?.glyphProfile ?? 'unicode'); setPresetQuery(''); setError(null); }
+    if (value) { setEditing(false); setPreviewState('idle'); setGlyphProfile(identity?.glyphProfile ?? 'unicode'); setPresetQuery(''); setPickerTab('presets'); setError(null); }
     else { setGalleryOpen(false); onClose?.(); }
   };
   async function save(action: 'set' | 'shuffle' | 'reset' | 'generate' | 'vary', entry?: LibraryFace, family?: FaceFamily) {
@@ -509,49 +510,62 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
           : error ? <span title={error}>Retry face</span> : 'Loading…'}
       </Button>
     </DialogTrigger>}
+
     <DialogContent className="asciimoji-picker-dialog max-h-[90dvh] overflow-y-auto"
       onCloseAutoFocus={event => { if (restoreFocus) { event.preventDefault(); restoreFocus(); } }}>
       <DialogHeader className="asciimoji-picker-heading">
-        <p className="asciimoji-picker-eyebrow">MAKE IT YOURS</p>
-        <DialogTitle>Choose your asciimoji</DialogTitle>
-        <DialogDescription>Give this thread a little personality. Pick a character, use a classic, or make your own.</DialogDescription>
+        <DialogTitle>Choose an asciimoji</DialogTitle>
+        <DialogDescription>Pick a face for this thread. Select a preset or make your own.</DialogDescription>
       </DialogHeader>
       {!identity ? <div className="asciimoji-picker-loading"><p role={error ? 'alert' : 'status'}>{error ?? 'Loading face…'}</p>
         {error && <Button variant="outline" onClick={load}>Retry face</Button>}</div> : <>
-        <div className="asciimoji-picker-layout">
-          <aside className="asciimoji-picker-preview-panel" aria-label="Selected face preview">
-            <p className="asciimoji-picker-eyebrow">LIVE PREVIEW</p>
-            <div className="asciimoji-preview asciimoji-picker-hero-face" title={preview} aria-label={editing ? 'Draft asciimoji preview' : 'Current asciimoji'}>
-              <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewActivity}
-                animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
+        <div className="asciimoji-picker-current-row">
+          <div className="asciimoji-preview asciimoji-picker-current" title={preview}
+            aria-label={editing ? 'Draft asciimoji preview' : 'Current asciimoji'}>
+            <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile}
+              expressions={previewExpressions} state={previewActivity} animation={preferences.animation}
+              useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
+          </div>
+          <div className="asciimoji-picker-current-label">
+            <span>{editing ? 'Unsaved draft' : 'Current face'}</span>
+            <p role="status" title={scopeLabel}>{scopeLabel}</p>
+          </div>
+        </div>
+        <div className="asciimoji-picker-tabs" role="tablist" aria-label="Face picker sections">
+          {(['presets', 'characters', 'custom', 'saved'] as const).map((tab, index, tabs) =>
+            <Button key={tab} type="button" role="tab" id={'asciimoji-tab-' + tab}
+              aria-controls="asciimoji-picker-panel" aria-selected={pickerTab === tab}
+              tabIndex={pickerTab === tab ? 0 : -1}
+              variant="ghost" onClick={() => setPickerTab(tab)}
+              onKeyDown={event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+                  : (index + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length;
+                setPickerTab(tabs[next]!);
+                event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+              }}>
+              {tab === 'presets' ? 'Presets' : tab === 'characters' ? 'Characters' : tab === 'custom' ? 'Custom' : 'Saved'}
+            </Button>)}
+        </div>
+        <div id="asciimoji-picker-panel" role="tabpanel" aria-labelledby={'asciimoji-tab-' + pickerTab}
+          className="asciimoji-picker-panel" tabIndex={0}>
+          {pickerTab === 'presets' && <>
+            <Input aria-label="Search preset faces" placeholder="Search faces…" value={presetQuery}
+              onChange={event => setPresetQuery(event.target.value)} className="asciimoji-picker-search" />
+            <div className="asciimoji-picker-preset-grid">
+              {filteredPresets.map(item => <Button key={item.name} variant={!identity.generated && identity.face === item.face ? 'secondary' : 'outline'}
+              className="asciimoji-picker-choice h-auto flex-col gap-1 px-1 py-3" disabled={pending}
+              aria-pressed={!identity.generated && identity.face === item.face}
+              aria-label={'Choose ' + item.name + ': ' + item.face} onClick={() => void save('set', { face: item.face })}>
+              <span className="font-mono text-xs"><Face face={item.face} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} /></span>
+              <span className="text-xs text-muted-foreground">{item.name}</span>
+            </Button>)}
             </div>
-            <div className="asciimoji-picker-scope">
-              <span className="asciimoji-picker-scope-pill">{editing ? 'Unsaved draft' : identity.source === 'automatic' ? 'Automatic' : 'Saved for thread'}</span>
-              <p className="text-xs text-muted-foreground" role="status">{scopeLabel}</p>
-            </div>
-            <div className="asciimoji-picker-preview-sizes">
-              <div><span>HEADER</span><span aria-label="Header size preview" title={preview}>
-                <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewActivity} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
-              </span></div>
-              <div><span>SIDEBAR</span><span aria-label="Sidebar size preview" title={preview}>
-                <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewActivity} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} />
-              </span></div>
-            </div>
-            <div className="asciimoji-picker-preview-actions">
-              <Button variant="outline" disabled={pending} onClick={() => void save('shuffle')}>Surprise me</Button>
-              <Button variant="ghost" disabled={pending || identity.source === 'automatic'} onClick={() => void save('reset')}>Use automatic face</Button>
-            </div>
-          </aside>
-          <div className="asciimoji-picker-sections">
-            <section className="asciimoji-picker-section" aria-labelledby="asciimoji-families-title">
-              <div className="asciimoji-picker-section-heading">
-                <div>
-                  <h3 id="asciimoji-families-title">Explore families</h3>
-                  <p>Start with a generated character, then fine-tune its look.</p>
-                </div>
-                <span className="asciimoji-picker-section-number">01</span>
-              </div>
-          <label className="flex items-center justify-between gap-2 text-sm">Character glyphs
+            {!filteredPresets.length && <p className="asciimoji-picker-no-results" role="status">No faces match “{presetQuery}”.</p>}
+          </>}
+          {pickerTab === 'characters' && <div className="asciimoji-picker-character-panel">
+                      <label className="flex items-center justify-between gap-2 text-sm">Character glyphs
             <select aria-label="Character glyph profile" value={glyphProfile} disabled={pending}
               className="rounded-md border border-input bg-background px-2 py-1 text-sm"
               onChange={event => { setPreviews({}); setGlyphProfile(event.target.value as 'unicode' | 'ascii'); }}>
@@ -578,37 +592,9 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
             onSave={value => { setIdentity(value); changeOpen(false); }}
             onCancel={() => { setGalleryOpen(false); requestAnimationFrame(() => galleryTrigger.current?.focus()); }} />}
           <p className="text-xs text-muted-foreground">A variation is saved for this thread. Children in the same generated family share their parent’s eyes.</p>
-            </section>
-            <section className="asciimoji-picker-section" aria-labelledby="asciimoji-presets-title">
-              <div className="asciimoji-picker-section-heading">
-                <div>
-                  <h3 id="asciimoji-presets-title">Pick a preset</h3>
-                  <p>Familiar faces, one click away.</p>
-                </div>
-                <span className="asciimoji-picker-section-number">02</span>
-              </div>
-              <Input aria-label="Search preset faces" placeholder="Search by name or face…" value={presetQuery}
-                onChange={event => setPresetQuery(event.target.value)} className="asciimoji-picker-search" />
-              <div className="asciimoji-picker-preset-grid">
-                {filteredPresets.map(item => <Button key={item.name} variant={!identity.generated && identity.face === item.face ? 'secondary' : 'outline'}
-              className="asciimoji-picker-choice h-auto flex-col gap-1 px-1 py-3" disabled={pending}
-              aria-pressed={!identity.generated && identity.face === item.face}
-              aria-label={'Choose ' + item.name + ': ' + item.face} onClick={() => void save('set', { face: item.face })}>
-              <span className="font-mono text-xs"><Face face={item.face} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} /></span>
-              <span className="text-xs text-muted-foreground">{item.name}</span>
-            </Button>)}
-              </div>
-              {!filteredPresets.length && <p className="asciimoji-picker-no-results" role="status">No faces match “{presetQuery}”. Try another search.</p>}
-            </section>
-            <section className="asciimoji-picker-section" aria-label="Saved faces">
-              <FaceLibrary identity={identity} disabled={pending} onApply={entry => void save('set', entry)} onCharacterApply={value => { setIdentity(value); changeOpen(false); }} />
-            </section>
-            <section className="asciimoji-picker-section" aria-label="Custom face editor">
-              <div className="asciimoji-picker-section-heading">
-                <div><h3>Make it your own</h3><p>Write a custom face and optionally define its activity expressions.</p></div>
-                <span className="asciimoji-picker-section-number">04</span>
-              </div>
-              <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!draftError && !expressionError) void save('set'); }}>
+          </div>}
+          {pickerTab === 'custom' && <div className="asciimoji-picker-custom-panel">
+            <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!draftError && !expressionError) void save('set'); }}>
           <label htmlFor={'asciimoji-custom-' + threadId} className="text-sm font-medium">Custom face</label>
           <div className="flex gap-2">
             <Input id={'asciimoji-custom-' + threadId} aria-label="Custom asciimoji" value={draft}
@@ -655,16 +641,24 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
             </div>
           </details>
               </form>
-            </section>
-            {error && <div><p role="alert" className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={load} disabled={pending}>Reload face</Button></div>}
-            <section className="asciimoji-picker-section asciimoji-picker-settings">
-              <details onToggle={event => setProjectDefaultsOpen(event.currentTarget.open)}>
+          </div>}
+          {pickerTab === 'saved' && <FaceLibrary identity={identity} disabled={pending}
+            onApply={entry => void save('set', entry)}
+            onCharacterApply={value => { setIdentity(value); changeOpen(false); }} />}
+        </div>
+        {error && <div className="asciimoji-picker-error"><p role="alert" className="text-sm text-destructive">{error}</p>
+          <Button variant="outline" onClick={load} disabled={pending}>Reload face</Button></div>}
+        <div className="asciimoji-picker-footer">
+          <Button variant="outline" disabled={pending} onClick={() => void save('shuffle')}>Surprise me</Button>
+          <Button variant="ghost" disabled={pending || identity.source === 'automatic'}
+            onClick={() => void save('reset')}>Use automatic face</Button>
+        </div>
+        <div className="asciimoji-picker-settings">
+          <details onToggle={event => setProjectDefaultsOpen(event.currentTarget.open)}>
                 <summary className="cursor-pointer text-sm">Project defaults</summary>
           <div className="mt-2"><ProjectFamily threadId={threadId} disabled={pending} onFamily={setProjectInfo} /></div>
                 {projectDefaultsOpen && <GenerationDefaults threadId={threadId} disabled={pending} />}
               </details>
-            </section>
-          </div>
         </div>
       </>}
     </DialogContent>
