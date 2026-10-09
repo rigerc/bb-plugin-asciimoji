@@ -52,6 +52,11 @@ async function mount(settings: Record<string, string | boolean> = {}) {
   return { slot, update: (next: string) => { face = next; } };
 }
 
+
+function selectPickerTab(name: 'Presets' | 'Characters' | 'Custom' | 'Saved') {
+  fireEvent.click(screen.getByRole('tab', { name }));
+}
+
 test('opens picker, saves a preset and closes', async () => {
   const { slot } = await mount();
   expect(screen.getByText(':-)').classList.contains('text-primary')).toBe(false);
@@ -254,6 +259,7 @@ test('sidebar face reserves space beside the visible title instead of inside BBâ
 test('generated picker choice renders activity without changing the saved base face', async () => {
   const { slot } = await mount({ showActivity: true, animation: 'off' });
   fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :-), running' }));
+  selectPickerTab('Characters');
   fireEvent.click(await screen.findByRole('button', { name: 'Keep Classic family' }));
   const generated = generateFace('thr_one');
   const button = await screen.findByRole('button', { name: `Change thread asciimoji: ${renderFace(generated)}, running` });
@@ -350,6 +356,7 @@ test('family selection saves a generated thread override', async () => {
   const { slot } = await mount();
   try {
     fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    selectPickerTab('Characters');
     fireEvent.click(await screen.findByRole('button', { name: 'Keep Bears family' }));
     const expected = renderFace(generateFace('thr_one', 'bear'));
     await screen.findByRole('button', { name: `Change thread asciimoji: ${expected}` });
@@ -403,6 +410,7 @@ test('draft validation and activity previews agree with the saved custom express
   const { slot } = await mount({ animation: 'off' });
   try {
     fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    selectPickerTab('Custom');
     const input = await screen.findByRole('textbox', { name: 'Custom asciimoji' });
     fireEvent.change(input, { target: { value: '\u2800' } });
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
@@ -463,6 +471,7 @@ test('favorites update live and reuse their activity expressions', async () => {
   });
   try {
     fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :D' }));
+    selectPickerTab('Saved');
     fireEvent.click(await screen.findByRole('button', { name: 'Save text' }));
     await screen.findByRole('button', { name: 'Reuse favorite: :D (waiting :?)' });
     favorites = [{ face: ':-)', expressions: { waiting: ':?' } }];
@@ -630,6 +639,7 @@ test('favorites with identical text remain distinguishable', async () => {
   });
   try {
     fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :D' }));
+    selectPickerTab('Saved');
     expect(await screen.findByRole('button', { name: 'Reuse favorite: :-)' })).toBeTruthy();
     expect(await screen.findByRole('button', { name: 'Reuse favorite: :-) (running :D)' })).toBeTruthy();
     expect(await screen.findByRole('button', { name: 'Remove favorite: :-)' })).toBeTruthy();
@@ -747,6 +757,7 @@ test('family previews load drafts and only generate after choosing a family', as
     fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
     await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'previews')).toBe(true));
     expect(slot.inspection.rpcCalls.some(call => call.method === 'generate')).toBe(false);
+    selectPickerTab('Characters');
     fireEvent.click(await screen.findByRole('button', { name: 'Keep Cats family' }));
     await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'generate' && JSON.stringify(call.input) === JSON.stringify({ threadId: 'thr_one', family: 'cat' }))).toBe(true));
   } finally { slot.lifecycle.unmount(); }
@@ -773,6 +784,7 @@ async function mountGallery(expire = false) {
     },
   });
   fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: ' + identity.face }));
+  selectPickerTab('Characters');
   fireEvent.click(await screen.findByRole('button', { name: 'Explore variations' }));
   await screen.findByRole('radio', { name: 'Variation 1: ' + identity.face });
   return { slot, options };
@@ -844,6 +856,7 @@ async function mountLibraryReview(stale = false, recents = false) {
     },
   });
   fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: ' + face }));
+  selectPickerTab('Saved');
   await screen.findByText('An older Asciimoji window changed the face library. Your saved characters are preserved.');
   return { slot, character, added, removed };
 }
@@ -980,4 +993,24 @@ test('picker preset search filters faces and displays an empty state', async () 
   expect(screen.queryByRole('button', { name: /^Choose / })).toBeNull();
   expect(screen.getByText(/No faces match/)).toBeTruthy();
   slot.lifecycle.unmount();
+});
+
+test('picker tabs reveal only the chosen task and support keyboard navigation', async () => {
+  const { slot } = await mount();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    const presetsTab = await screen.findByRole('tab', { name: 'Presets' });
+    expect(presetsTab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('textbox', { name: 'Search preset faces' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Custom asciimoji' })).toBeNull();
+    fireEvent.keyDown(presetsTab, { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: 'Characters' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByRole('textbox', { name: 'Search preset faces' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Keep Classic family' })).toBeTruthy();
+    selectPickerTab('Custom');
+    expect(screen.getByRole('textbox', { name: 'Custom asciimoji' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Keep Classic family' })).toBeNull();
+    selectPickerTab('Saved');
+    expect(await screen.findByRole('button', { name: 'Save text' })).toBeTruthy();
+  } finally { slot.lifecycle.unmount(); }
 });
