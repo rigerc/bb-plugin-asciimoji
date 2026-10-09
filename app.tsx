@@ -228,8 +228,11 @@ function FaceLibrary({ identity, disabled, onApply, onCharacterApply }: {
   }
   const changes = library?.legacyChanges;
   const toggle = (key: string, checked: boolean, setter: (value: (current: string[]) => string[]) => void) => setter(current => checked ? [...current, key] : current.filter(item => item !== key));
-  return <div className="space-y-2">
-    <p className="text-sm font-medium">Your face library</p>
+  return <div className="asciimoji-picker-library">
+    <div className="asciimoji-picker-section-heading">
+      <div><h3>Your face library</h3><p>Quickly reuse the characters you love.</p></div>
+      <span className="asciimoji-picker-section-number">03</span>
+    </div>
     <div className="flex flex-wrap gap-2">
       <Button variant="outline" disabled={disabled || pending || !library} onClick={() => void update(() => rpc.call('favorite', { face: current.face, ...(current.expressions ? { expressions: current.expressions } : {}), saved: !saved }))}>
         {saved ? 'Remove saved text' : 'Save text'}
@@ -276,9 +279,9 @@ function FaceLibrary({ identity, disabled, onApply, onCharacterApply }: {
     {library?.projectionPending && <p role="status" className="text-xs text-muted-foreground">Your saved characters are preserved. Updating the older text library is pending.</p>}
     {!library && !error && <p className="text-xs text-muted-foreground">Loading library…</p>}
     {library && <>
-      <div className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto">
+      <div className="asciimoji-picker-library-grid">
         {library.favorites.map(entry => <div className="flex min-w-0 gap-1" key={libraryEntryKey(entry)}>
-          <Button variant="outline" className="min-w-0 flex-1 truncate font-mono text-xs" disabled={disabled || pending}
+          <Button variant="outline" className="asciimoji-picker-saved-face min-w-0 flex-1 truncate font-mono text-xs" disabled={disabled || pending}
             aria-label={'Reuse favorite: ' + entryLabel(entry)} onClick={() => void apply(entry)}>
             <span className="truncate" title={entryLabel(entry)}>{entry.face}{entry.kind === 'generated' && <span className="ml-1 text-[10px] text-muted-foreground">character</span>}</span>
           </Button>
@@ -402,6 +405,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   const [previewState, setPreviewState] = useState<FaceState>('idle');
   const [glyphProfile, setGlyphProfile] = useState<'unicode' | 'ascii'>('unicode');
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [presetQuery, setPresetQuery] = useState('');
   const [projectDefaultsOpen, setProjectDefaultsOpen] = useState(false);
   const galleryTrigger = useRef<HTMLButtonElement>(null);
   const [projectInfo, setProjectInfo] = useState<ProjectDefaultInfo | null>(null);
@@ -459,7 +463,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   });
   const changeOpen = (value: boolean) => {
     setOpen(value);
-    if (value) { setEditing(false); setPreviewState('idle'); setGlyphProfile(identity?.glyphProfile ?? 'unicode'); setError(null); }
+    if (value) { setEditing(false); setPreviewState('idle'); setGlyphProfile(identity?.glyphProfile ?? 'unicode'); setPresetQuery(''); setError(null); }
     else { setGalleryOpen(false); onClose?.(); }
   };
   async function save(action: 'set' | 'shuffle' | 'reset' | 'generate' | 'vary', entry?: LibraryFace, family?: FaceFamily) {
@@ -489,6 +493,10 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   const scopeLabel = identity?.source === 'automatic'
     ? projectInfo?.origin === 'project' ? `Following project override: ${familyName}` : `Following global default: ${familyName}`
     : identity?.generated ? 'Saved for this thread: ' + familyName : 'Saved for this thread: ' + (identity?.source === 'preset' ? 'preset' : 'custom face');
+  const filteredPresets = FACES.filter(item => {
+    const query = presetQuery.trim().toLocaleLowerCase();
+    return !query || item.name.toLocaleLowerCase().includes(query) || item.face.toLocaleLowerCase().includes(query);
+  });
   if (!visible) return null;
   return <Dialog open={open} onOpenChange={changeOpen}>
     {!pickerOnly && <DialogTrigger asChild>
@@ -501,25 +509,48 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
           : error ? <span title={error}>Retry face</span> : 'Loading…'}
       </Button>
     </DialogTrigger>}
-    <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md"
+    <DialogContent className="asciimoji-picker-dialog max-h-[90dvh] overflow-y-auto"
       onCloseAutoFocus={event => { if (restoreFocus) { event.preventDefault(); restoreFocus(); } }}>
-      <DialogHeader>
-        <DialogTitle>Your thread’s asciimoji</DialogTitle>
-        <DialogDescription>Choose a face, keep a family, or use the automatic face from your global and project defaults.</DialogDescription>
+      <DialogHeader className="asciimoji-picker-heading">
+        <p className="asciimoji-picker-eyebrow">MAKE IT YOURS</p>
+        <DialogTitle>Choose your asciimoji</DialogTitle>
+        <DialogDescription>Give this thread a little personality. Pick a character, use a classic, or make your own.</DialogDescription>
       </DialogHeader>
       {!identity ? <div><p role={error ? 'alert' : 'status'}>{error ?? 'Loading face…'}</p>
         {error && <Button variant="outline" onClick={load}>Retry face</Button>}</div> : <>
-        <div className="space-y-2">
-          <div className="asciimoji-preview rounded-lg bg-muted p-5 text-center font-mono text-2xl" title={preview} aria-label={editing ? 'Draft asciimoji preview' : 'Current asciimoji'}>
-            <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewActivity}
-              animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
-          </div>
-          <p className="text-xs text-muted-foreground" role="status">
-            {scopeLabel}
-          </p>
-        </div>
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Keep a family for this thread</p>
+        <div className="asciimoji-picker-layout">
+          <aside className="asciimoji-picker-preview-panel" aria-label="Selected face preview">
+            <p className="asciimoji-picker-eyebrow">LIVE PREVIEW</p>
+            <div className="asciimoji-preview asciimoji-picker-hero-face" title={preview} aria-label={editing ? 'Draft asciimoji preview' : 'Current asciimoji'}>
+              <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewActivity}
+                animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
+            </div>
+            <div className="asciimoji-picker-scope">
+              <span className="asciimoji-picker-scope-pill">{editing ? 'Unsaved draft' : identity.source === 'automatic' ? 'Automatic' : 'Saved for thread'}</span>
+              <p className="text-xs text-muted-foreground" role="status">{scopeLabel}</p>
+            </div>
+            <div className="asciimoji-picker-preview-sizes">
+              <div><span>HEADER</span><span aria-label="Header size preview" title={preview}>
+                <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewActivity} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
+              </span></div>
+              <div><span>SIDEBAR</span><span aria-label="Sidebar size preview" title={preview}>
+                <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewActivity} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} />
+              </span></div>
+            </div>
+            <div className="asciimoji-picker-preview-actions">
+              <Button variant="outline" disabled={pending} onClick={() => void save('shuffle')}>Surprise me</Button>
+              <Button variant="ghost" disabled={pending || identity.source === 'automatic'} onClick={() => void save('reset')}>Use automatic face</Button>
+            </div>
+          </aside>
+          <div className="asciimoji-picker-sections">
+            <section className="asciimoji-picker-section" aria-labelledby="asciimoji-families-title">
+              <div className="asciimoji-picker-section-heading">
+                <div>
+                  <h3 id="asciimoji-families-title">Explore families</h3>
+                  <p>Start with a generated character, then fine-tune its look.</p>
+                </div>
+                <span className="asciimoji-picker-section-number">01</span>
+              </div>
           <label className="flex items-center justify-between gap-2 text-sm">Character glyphs
             <select aria-label="Character glyph profile" value={glyphProfile} disabled={pending}
               className="rounded-md border border-input bg-background px-2 py-1 text-sm"
@@ -528,10 +559,10 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
             </select>
           </label>
           <p className="text-xs text-muted-foreground">Characters have paired traits and personality. Choose a family to save a new character.</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="asciimoji-picker-family-grid">
             {FACE_FAMILIES.map(item => <Button key={item.id}
               variant={identity.generated && (identity.glyphProfile ?? 'unicode') === glyphProfile && (identity.generated.family ?? 'classic') === item.id ? 'secondary' : 'outline'}
-              className="h-auto flex-col gap-1 px-1 py-2" disabled={pending || !previews[item.id]}
+              className="asciimoji-picker-choice h-auto flex-col gap-1 px-1 py-2" disabled={pending || !previews[item.id]}
               aria-pressed={!!identity.generated && (identity.glyphProfile ?? 'unicode') === glyphProfile && (identity.generated.family ?? 'classic') === item.id}
               aria-label={'Keep ' + item.name + ' family'} onClick={() => void save('generate', undefined, item.id)}>
               <span className="font-mono text-xs"><Face face={previews[item.id] ?? '…'} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} /></span>
@@ -547,21 +578,33 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
             onSave={value => { setIdentity(value); changeOpen(false); }}
             onCancel={() => { setGalleryOpen(false); requestAnimationFrame(() => galleryTrigger.current?.focus()); }} />}
           <p className="text-xs text-muted-foreground">A variation is saved for this thread. Children in the same generated family share their parent’s eyes.</p>
-        </div>
-        <details open>
-          <summary className="cursor-pointer text-sm font-medium">Presets</summary>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {FACES.map(item => <Button key={item.name} variant={!identity.generated && identity.face === item.face ? 'secondary' : 'outline'}
-              className="h-auto flex-col gap-1 px-1 py-3" disabled={pending}
+            </section>
+            <section className="asciimoji-picker-section" aria-labelledby="asciimoji-presets-title">
+              <div className="asciimoji-picker-section-heading">
+                <div>
+                  <h3 id="asciimoji-presets-title">Pick a preset</h3>
+                  <p>Familiar faces, one click away.</p>
+                </div>
+                <span className="asciimoji-picker-section-number">02</span>
+              </div>
+              <Input aria-label="Search preset faces" placeholder="Search by name or face…" value={presetQuery}
+                onChange={event => setPresetQuery(event.target.value)} className="asciimoji-picker-search" />
+              <div className="asciimoji-picker-preset-grid">
+                {filteredPresets.map(item => <Button key={item.name} variant={!identity.generated && identity.face === item.face ? 'secondary' : 'outline'}
+              className="asciimoji-picker-choice h-auto flex-col gap-1 px-1 py-3" disabled={pending}
               aria-pressed={!identity.generated && identity.face === item.face}
               aria-label={'Choose ' + item.name + ': ' + item.face} onClick={() => void save('set', { face: item.face })}>
               <span className="font-mono text-xs"><Face face={item.face} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} /></span>
               <span className="text-xs text-muted-foreground">{item.name}</span>
             </Button>)}
-          </div>
-        </details>
-        <FaceLibrary identity={identity} disabled={pending} onApply={entry => void save('set', entry)} onCharacterApply={value => { setIdentity(value); changeOpen(false); }} />
-        <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!draftError && !expressionError) void save('set'); }}>
+              </div>
+              {!filteredPresets.length && <p className="asciimoji-picker-no-results" role="status">No faces match “{presetQuery}”. Try another search.</p>}
+            </section>
+            <section className="asciimoji-picker-section" aria-label="Saved faces">
+              <FaceLibrary identity={identity} disabled={pending} onApply={entry => void save('set', entry)} onCharacterApply={value => { setIdentity(value); changeOpen(false); }} />
+            </section>
+            <section className="asciimoji-picker-section" aria-label="Custom face editor">
+              <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!draftError && !expressionError) void save('set'); }}>
           <label htmlFor={'asciimoji-custom-' + threadId} className="text-sm font-medium">Custom face</label>
           <div className="flex gap-2">
             <Input id={'asciimoji-custom-' + threadId} aria-label="Custom asciimoji" value={draft}
@@ -607,16 +650,17 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
                 state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} /></span>
             </div>
           </details>
-        </form>
-        {error && <div><p role="alert" className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={load} disabled={pending}>Reload face</Button></div>}
-        <details onToggle={event => setProjectDefaultsOpen(event.currentTarget.open)}>
-          <summary className="cursor-pointer text-sm">Project defaults</summary>
+              </form>
+            </section>
+            {error && <div><p role="alert" className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={load} disabled={pending}>Reload face</Button></div>}
+            <section className="asciimoji-picker-section asciimoji-picker-settings">
+              <details onToggle={event => setProjectDefaultsOpen(event.currentTarget.open)}>
+                <summary className="cursor-pointer text-sm">Project defaults</summary>
           <div className="mt-2"><ProjectFamily threadId={threadId} disabled={pending} onFamily={setProjectInfo} /></div>
-          {projectDefaultsOpen && <GenerationDefaults threadId={threadId} disabled={pending} />}
-        </details>
-        <div className="flex justify-between gap-2">
-          <Button variant="outline" disabled={pending} onClick={() => void save('shuffle')}>Surprise me</Button>
-          <Button variant="ghost" disabled={pending || identity.source === 'automatic'} onClick={() => void save('reset')}>Use automatic face</Button>
+                {projectDefaultsOpen && <GenerationDefaults threadId={threadId} disabled={pending} />}
+              </details>
+            </section>
+          </div>
         </div>
       </>}
     </DialogContent>
