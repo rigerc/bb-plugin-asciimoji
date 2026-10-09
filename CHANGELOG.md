@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — unreleased
+## 1.0.0
 
 Breaking changes from 0.3.x:
 
