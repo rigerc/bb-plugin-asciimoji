@@ -21,3 +21,176 @@ button:hover .asciimoji-face[data-motion="subtle"][data-activity="running"], but
 .asciimoji-settings-preview-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; border: 1px solid var(--border, #e5e5e5); border-radius: 0.5rem; padding: 0.5rem 0.75rem; }
 .asciimoji-settings-preview-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
 .asciimoji-settings-preview-controls label { display: grid; gap: 0.25rem; font-size: 0.8rem; }
+
+
+/* Compact picker: one active task, one preview, with advanced settings collapsed. */
+.asciimoji-picker-dialog {
+  width: min(540px, calc(100vw - 28px));
+  max-width: 540px !important;
+  gap: 0;
+  padding: 0 !important;
+  overflow-x: hidden;
+  border-radius: 14px;
+}
+.asciimoji-picker-heading { gap: 5px; padding: 23px 24px 14px; }
+.asciimoji-picker-heading h2 { font-size: 1.22rem; line-height: 1.35; letter-spacing: -.02em; }
+.asciimoji-picker-heading p { font-size: 12px; line-height: 1.45; }
+.asciimoji-picker-loading { padding: 20px 24px; }
+.asciimoji-picker-current-row {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin: 0 24px 18px;
+  padding: 13px 15px;
+  border: 1px solid var(--border, #e4e4e7);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--muted, #f5f5f6) 65%, var(--background, white));
+}
+.asciimoji-picker-current {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 67px;
+  min-width: 0;
+  border: 1px solid var(--border, #e4e4e7);
+  border-radius: 8px;
+  background: var(--background, white);
+  font: 21px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.asciimoji-picker-current .asciimoji-face {
+  max-width: 104px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.asciimoji-picker-current-label { min-width: 0; display: grid; gap: 4px; }
+.asciimoji-picker-current-label > span { font-size: 13px; font-weight: 650; }
+.asciimoji-picker-current-label p {
+  margin: 0;
+  color: var(--muted-foreground, #71717a);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.asciimoji-picker-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0,1fr));
+  gap: 4px;
+  margin: 0 24px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--muted, #f4f4f5);
+}
+.asciimoji-picker-tabs button {
+  min-width: 0;
+  padding: 8px 4px;
+  height: 35px;
+  font-size: 12px;
+  font-weight: 550;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted-foreground, #71717a);
+}
+.asciimoji-picker-tabs button[aria-selected="true"] {
+  background: var(--background, white);
+  color: var(--foreground, #18181b);
+  box-shadow: 0 1px 3px #00000016;
+  font-weight: 650;
+}
+.asciimoji-picker-panel { padding: 18px 24px 16px; min-width: 0; }
+.asciimoji-picker-panel:focus { outline: none; }
+.asciimoji-picker-search { margin-bottom: 13px; }
+.asciimoji-picker-preset-grid,
+.asciimoji-picker-family-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.asciimoji-picker-family-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.asciimoji-picker-choice {
+  min-width: 0;
+  min-height: 72px;
+  border-radius: 9px !important;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.asciimoji-picker-choice .asciimoji-face {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.asciimoji-picker-choice[aria-pressed="true"] {
+  border-color: var(--primary, #6b5bd2) !important;
+  background: color-mix(in srgb, var(--primary, #6b5bd2) 8%, var(--background, white));
+}
+.asciimoji-picker-choice:hover:not(:disabled) { border-color: var(--primary, #6b5bd2); }
+.asciimoji-picker-no-results {
+  padding: 22px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-foreground, #71717a);
+}
+.asciimoji-picker-character-panel,
+.asciimoji-picker-custom-panel,
+.asciimoji-picker-library { display: grid; gap: 12px; }
+.asciimoji-picker-character-panel label { font-size: 12px; }
+.asciimoji-picker-character-panel > p { font-size: 11px; color: var(--muted-foreground, #71717a); }
+.asciimoji-picker-library-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap: 8px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.asciimoji-picker-saved-face { min-width: 0; }
+.asciimoji-picker-section-heading { display: none; }
+.asciimoji-picker-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border, #e4e4e7);
+}
+.asciimoji-picker-footer button { font-size: 12px; }
+.asciimoji-picker-settings {
+  padding: 0 24px 19px;
+  color: var(--muted-foreground, #71717a);
+}
+.asciimoji-picker-settings summary {
+  cursor: pointer;
+  font-size: 12px;
+  list-style-position: inside;
+}
+.asciimoji-picker-settings details[open] {
+  padding-top: 9px;
+  color: var(--foreground, #18181b);
+}
+.asciimoji-picker-error { padding: 0 24px 10px; }
+.asciimoji-picker-dialog button:focus-visible,
+.asciimoji-picker-dialog input:focus-visible,
+.asciimoji-picker-dialog summary:focus-visible,
+.asciimoji-picker-dialog select:focus-visible {
+  outline: 2px solid var(--ring, var(--primary, #6b5bd2));
+  outline-offset: 2px;
+}
+@media (max-width: 540px) {
+  .asciimoji-picker-dialog { width: 100%; max-width: none !important; }
+  .asciimoji-picker-heading { padding: 15px 16px 13px; }
+  .asciimoji-picker-current-row { margin: 0 16px 15px; padding: 11px; }
+  .asciimoji-picker-current { width: 89px; height: 60px; font-size: 18px; }
+  .asciimoji-picker-current .asciimoji-face { max-width: 82px; }
+  .asciimoji-picker-tabs { margin: 0 16px; }
+  .asciimoji-picker-tabs button { font-size: 11px; padding: 7px 1px; }
+  .asciimoji-picker-panel { padding: 16px; }
+  .asciimoji-picker-preset-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .asciimoji-picker-footer { padding: 13px 16px; }
+  .asciimoji-picker-settings { padding: 0 16px 16px; }
+}
+@media (max-width: 340px) {
+  .asciimoji-picker-preset-grid, .asciimoji-picker-family-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .asciimoji-picker-current-label p { max-height: 38px; overflow: hidden; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .asciimoji-picker-choice { transition: none; }
+}
