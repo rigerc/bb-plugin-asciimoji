@@ -1,4 +1,4 @@
-import type { FaceFamily, GeneratedFace } from './faces.js';
+import type { FaceFamily, GeneratedFaceV2 } from './faces.js';
 
 // Read-once storage migration only. This frozen v1 recipe is not used for
 // automatic generation or new choices; it produces a v2 snapshot with identical
@@ -19,7 +19,7 @@ function oldHash(id: string): number {
 /** Freeze a stored v1 recipe as a v2 identity without changing its appearance. */
 export function migrateGeneratedV1(
   threadId: string, parentThreadId: string | null | undefined, family: FaceFamily = 'classic',
-): GeneratedFace {
+): GeneratedFaceV2 {
   const hash = oldHash(threadId);
   const eyeHash = oldHash(parentThreadId ?? threadId);
   const ears = [['(', ')'], ['ʕ', 'ʔ'], ['[', ']'], ['{', '}']] as const;

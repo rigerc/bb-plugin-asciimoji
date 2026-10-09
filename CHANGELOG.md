@@ -13,7 +13,17 @@ Breaking changes from 0.3.x:
 - `generateFaceV2(threadId, family?, options?)` is renamed to
   `generateFace(threadId, family?, options?)`; the old v1
   `generateFace(threadId, parentThreadId?, family?)` signature is removed.
-  Runtime-generated identities always have `version: 2`.
+  Saved version-2 identities retain `version: 2`; all new generation uses
+  `version: 3`. RPC `generated` is now a versioned union.
+- The legacy v2 generator is removed: `generate`, `previews`, and automatic faces
+  always produce version-3 characters. The `edition` RPC/CLI option, the
+  `defaultEdition` setting, and per-project `edition` overrides are gone; stale
+  per-project `edition` keys are deleted lazily. Previously saved version-1
+  recipes still migrate, and saved version-2 snapshots keep rendering unchanged.
+  Vary on a saved v2 identity now produces a v3 character instead of staying v2.
+- Library JSON includes `kind: text` and `kind: generated` references. Character
+  references resolve immutable snapshot blobs rather than returning inline glyph
+  snapshots. Existing CLI favorite behavior saves text; `--character` opts in.
 
 Saved data and visual geometry:
 
@@ -27,6 +37,18 @@ Saved data and visual geometry:
   Rendering uses a single implementation and honors absent accessories in
   migrated snapshots, including activity expressions.
 - Thread overrides, preset/custom choices, and library entries remain stored.
+- Expanded characters add paired eyes, capability-filtered layers, fixed
+  personality, saved compact/expressive geometry, and explicit ASCII generation.
+  Activity preserves their eyes and uses staggered saved frames.
+- A bounded preview gallery supports trait locks and exact snapshot saves.
+  Five-minute memory tokens expire cleanly after reload/context changes.
+- Generated favorites and recents retain complete snapshots. A separate canonical
+  library index, immutable blobs, and compatible legacy projection prevent older
+  builds from wiping character data. Older text edits prompt explicit review.
+- Per-thread queues serialize saves/deletion; Reset/deletion clear preview tokens
+  and embedded variation history. Queues/tokens assume one active server factory.
+- Typed paginated descendant invalidation includes hidden/archived children and
+  falls back to project refresh on traversal errors or bounds.
 
 Host integration and publishing:
 

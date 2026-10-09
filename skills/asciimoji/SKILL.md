@@ -52,7 +52,35 @@ The picker labels automatic choices as Following global/project default and over
 
 Use `bb asciimoji vary` or Try another variation to save a visibly different face in the current generated family; text choices use the project family. The choice persists across reloads.
 
-Use `bb asciimoji favorite` to favorite the current static face and any custom expressions; `--remove` removes that exact combination. `bb asciimoji library --json` lists favorites and recent faces without requiring a thread. The library stores up to 50 favorites and 20 distinct recent choices, syncs across windows, and survives reloads. Reusing a generated favorite saves its static text with activity markers, not its generated identity.
+Use `bb asciimoji favorite` to save current text and custom expressions; add
+`--character` to preserve a complete generated character, or `--remove` to remove
+that exact kind. Text and character favorites remain distinct even with the same
+face. `bb asciimoji library --json` returns text entries and generated snapshot
+references. The library holds 50 favorites and 20 distinct recent choices.
+Reusing a character pins its exact glyph snapshot and activity behavior.
+
+Use `bb asciimoji generate --family cat` for a character, or add `--glyph-profile ascii` for printable ASCII.
+Characters have paired eyes, layered decorations, a fixed personality, and
+saved compact geometry. Their activity preserves identifying eyes. Vary keeps the glyph profile. Optional `--lock-outline`, `--lock-eyes`, `--unlock-eyes`,
+`--lock-mouth`, `--lock-accessory`, and `--resemblance close|wide` control variation.
+Accessories lock includes every decoration layer and its absence.
+
+The gallery previews local drafts: choose a candidate then Save. Cancel
+and Refresh do not save. Previews expire after five minutes, reload, or relevant
+context changes; `PREVIEW_EXPIRED` offers Refresh and writes nothing. Global
+`defaultGlyphProfile` and project overrides affect
+following automatic faces; saved choices remain pinned.
+
+The canonical library uses `library:v2` with immutable `library:snapshot:` blobs;
+the old `library` key remains a text projection. Older text changes produce a
+persistent Review text changes/Keep current library banner. Import only selected
+text changes; projected text deletion never removes a character. Corrupt/future
+canonical data blocks mutation instead of becoming empty. Reload old windows
+before editing v3 choices: old builds display them as automatic v2, and old
+mutating commands overwrite them.
+
+Preview tokens and queues assume one active plugin server factory; reload or
+cross-worker Apply expires previews. They do not coordinate distributed writers.
 
 Set optional custom activity faces with `bb asciimoji set ':-)' --running ':D' --waiting ':?' --error ':('`. Set replaces the expression map; omitted states use markers. The picker has the same three inputs and an activity preview. Favorites preserve mappings. Controls use the same face validation for every state. JSON identities report `source` (automatic, generated, preset, custom) and `projectId`; the `custom` boolean was removed in the 1.0.0 breaking API (use `source`).
 

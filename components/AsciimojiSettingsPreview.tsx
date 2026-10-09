@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSettings } from '@get-bb/plugin-sdk/app';
-import { FACE_FAMILIES, generateFace, renderFace, type FaceFamily, type FaceState, type SidebarWidth } from '../faces.js';
+import { FACE_FAMILIES, renderFace, type FaceFamily, type FaceState, type SidebarWidth } from '../faces.js';
+import { generateFaceV3 } from '../family-definitions.js';
 import { Face, usePreferences } from '../app.js';
 
 const STATES: FaceState[] = ['idle', 'running', 'waiting', 'error'];
@@ -12,15 +13,24 @@ export default function AsciimojiSettingsPreview() {
   const { values } = useSettings();
   const [family, setFamily] = useState<FaceFamily | null>(null);
   const [width, setWidth] = useState<SidebarWidth | null>(null);
+  const [glyphProfile, setGlyphProfile] = useState<'unicode' | 'ascii' | null>(null);
+  const effectiveGlyphProfile = glyphProfile ?? (values?.defaultGlyphProfile === 'ascii' ? 'ascii' : 'unicode');
   const effectiveFamily: FaceFamily = family ?? preferences.defaultFamily;
   const effectiveWidth: SidebarWidth = width ?? preferences.sidebarWidth;
-  const sample = useMemo(() => generateFace('preview', effectiveFamily), [effectiveFamily]);
-  const base = renderFace(sample);
+  const sample = useMemo(() => generateFaceV3('preview', effectiveFamily, { glyphProfile: effectiveGlyphProfile }), [effectiveFamily, effectiveGlyphProfile]);
+  const base = renderFace(sample, { glyphProfile: effectiveGlyphProfile });
   const globalName = FACE_FAMILIES.find(item => item.id === preferences.defaultFamily)?.name ?? 'Classic';
 
   return (
     <div className="asciimoji-settings-preview" aria-label="Asciimoji appearance preview">
       <div className="asciimoji-settings-preview-controls">
+        <label>Preview glyphs
+          <select aria-label="Preview glyph profile" value={effectiveGlyphProfile}
+            onChange={event => { setGlyphProfile(event.target.value as 'unicode' | 'ascii'); }}
+            className="rounded-md border border-input bg-background px-2 py-1 text-sm">
+            <option value="unicode">Unicode</option><option value="ascii">ASCII only</option>
+          </select>
+        </label>
         <label>Preview family
           <select
             aria-label="Preview face family"
@@ -55,11 +65,17 @@ export default function AsciimojiSettingsPreview() {
               <Face
                 face={base}
                 generated={sample}
+                glyphProfile={effectiveGlyphProfile}
                 state={preferences.showActivity ? state : undefined}
                 animation={preferences.animation}
                 useThemeColor={preferences.useThemeColor}
                 activityStyle={preferences.activityStyle}
               />
+            </span>
+            <span aria-label={state + ' sidebar preview'}>
+              <Face face={base} generated={sample} glyphProfile={effectiveGlyphProfile} state={preferences.showActivity ? state : undefined}
+                animation={preferences.animation} useThemeColor={preferences.useThemeColor}
+                activityStyle={preferences.activityStyle} sidebar sidebarWidth={effectiveWidth} />
             </span>
           </div>
         ))}

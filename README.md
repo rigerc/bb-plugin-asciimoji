@@ -52,21 +52,35 @@ the eyes they had when saved, even if the parent later changes.
 Expand **Project defaults** in the picker to change the family for all automatic
 faces in that project, including new threads. Saved choices remain as they are.
 
-Generated faces use one version-2 generator. Version-1 saved recipes are migrated
-on first read to version-2 snapshots **without changing their face or five-character
-width**. New generated identities normally have six codepoints including an
-accessory; existing snapshots retain their saved geometry.
+Generation always uses version 3: paired eyes, layered decorations, a fixed personality, and saved
+compact/expressive geometry. Choose Unicode or printable ASCII when generating
+a character. Saved glyphs remain fixed when catalogs or defaults change.
+Previously saved version-1 recipes still migrate to version-2 snapshots without changing their face, and saved version-2 snapshots keep rendering unchanged.
+
+Characters offer a variation gallery with Outline, Eyes, Mouth, and
+Decorations locks. Inherited eyes start locked; Decorations includes every layer
+and its absence. Select a preview, then Save. Previewing, refreshing, or cancelling
+does not write a choice. Previews expire after five minutes or a relevant context
+change; Refresh recovers expired previews. Vary keeps the character's version,
+personality, and glyph profile.
 
 ### Favorites and recent faces
 
-**Favorite current face** keeps reusable text and any custom activity expressions
-in the face library. Click a favorite to use it in another thread; remove it with
-the adjacent × control. Expand **Recent faces** to reuse previous choices.
+**Save text** keeps reusable text and custom activity expressions. **Save character**
+keeps the complete generated identity, including its activity behavior and glyph
+profile. Reusing a character pins that exact snapshot in another thread. Text and
+characters with the same displayed face remain separate favorites. Remove an entry
+with its adjacent × control; expand **Recent faces** to reuse previous choices.
 
 The plugin stores up to 50 favorites and the 20 most recent distinct choices.
-The library syncs across windows and survives reloads. Favoriting a generated
-face keeps its static text; reusing it creates a saved text choice with activity
-markers rather than a generated identity.
+The library syncs across windows and survives reloads. Generated saves and applies
+remember characters; custom/preset saves remember text. Preview drafts never enter
+Recent faces.
+
+If an older plugin changes the compatible text library, a persistent banner offers
+**Review text changes** or **Keep current library**. Review imports only explicitly
+selected text changes. Deleting a character's projected text in an old build never
+deletes the saved character. Reload older windows to load the current controls.
 
 ### Custom activity expressions
 
@@ -91,6 +105,10 @@ Open **Settings → Plugins → Asciimoji** to configure:
 - **Sidebar face width** — Compact (6ch), Standard (default, 10ch), or Expanded (16ch).
 - **Default face family** — Classic (default), Bears, Robots, Cats, or Minimal. Global fallback
   for projects without an explicit override.
+- Glyph defaults can be overridden per project.
+  Unset global options start with Unicode; project options inherit the
+  global field independently. Pinned choices retain their
+  snapshots; automatic faces and future threads follow the effective defaults.
 
 Configuration precedence is Thread override → Project override → Global default.
 Thread overrides are saved custom, preset, or generated choices. Project overrides are set in
@@ -122,8 +140,10 @@ bb plugin config asciimoji set defaultFamily bear
 ```
 
 Activity expresses idle, running, waiting for input, and error. With Expressions,
-generated faces change eyes and text choices use custom expressions with marker fallback;
-with Markers, all faces keep their static text plus a status marker (·, ?, !).
+faces preserve eyes
+and use saved family expressions with status markers. Text choices use custom
+expressions with marker fallback. Markers keeps the static face plus ·, ?, or !;
+ASCII characters use a printable dot for running.
 Activity off shows only static base faces. Animation Off keeps static activity feedback.
 Running does not distinguish thinking
 from tool execution, and idle does not imply successful completion.
@@ -142,8 +162,12 @@ bb asciimoji set ':-)' --running ':D' --waiting ':?' --error ':('
 bb asciimoji shuffle
 bb asciimoji generate
 bb asciimoji generate --family bear
+bb asciimoji generate --family cat
+bb asciimoji generate --family robot --glyph-profile ascii
 bb asciimoji vary
+bb asciimoji vary --lock-eyes --lock-mouth
 bb asciimoji favorite
+bb asciimoji favorite --character
 bb asciimoji favorite --remove
 bb asciimoji library --json
 bb asciimoji project-default
@@ -176,8 +200,35 @@ The `custom` boolean is removed in version 1.0.0; consult [CHANGELOG.md](CHANGEL
 for migration of external consumers and generator API changes.
 
 Faces and the library live in plugin-owned BB storage. Deleting a thread removes
-its saved choice while reusable library entries remain. No external service,
+its saved choice, embedded variation history, and memory previews; reusable library
+entries remain. No external service,
 account, model call, or API key is required.
+
+### Storage and JSON compatibility
+
+`generated` is a version-2/version-3 union. `source` retains its existing values.
+Library JSON returns text entries (`kind`, `face`, optional `expressions`) and
+character references (`kind: generated`, `face`, `snapshotId`, optional `glyphProfile`).
+An apply/detail RPC resolves the immutable snapshot server-side.
+
+The canonical index lives at `library:v2`; immutable character blobs live at
+`library:snapshot:<sha256>`. The old `library` key remains a valid text projection.
+Malformed or future canonical data blocks mutation and cleanup instead of becoming
+an empty library. Unresolved older-library edits pause projection writes and are
+preserved at `library:legacy-pending`.
+
+Older plugins display an unreadable v3 thread choice as an automatic v2 face.
+Reading does not erase it; Set, Generate, Vary, or Reset in an old build replaces
+or removes that choice. Reload older windows before editing characters.
+
+Preview tokens and mutation queues assume one active plugin server factory.
+They are process-local. Reloads or an Apply request routed to another worker return
+`PREVIEW_EXPIRED` without saving a face. Distributed writers require shared tokens
+and coordinated transactions before deployment.
+
+Catalog glyphs are independently curated. The evaluated upstream generators supplied
+architectural ideas; no upstream code or palettes were copied. See the
+[implementation plan](docs/IMPLEMENTATION_PLAN.md) for pinned source and license evidence.
 
 ## Publish readiness
 

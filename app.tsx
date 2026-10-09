@@ -4,7 +4,9 @@ import './app.css';
 import { enableSidebar, getTargets, mountSidebar, subscribeTargets } from './sidebar.js';
 import { useSettings, definePluginApp, useRealtime, useRealtimeConnectionState, useRpc } from '@get-bb/plugin-sdk/app';
 import type { rpcContract, Identity, LibraryFace } from './server.js';
-import { FACES, FACE_FAMILIES, countFaceCharacters, faceValidationError, renderFace, resolveFaceDisplay, type ActivityStyle, type FaceExpressions, type FaceFamily, type GeneratedFace, type FaceState, type SidebarWidth } from './faces.js';
+import type { LibraryEntry, LibraryView, TextEntry } from './library.js';
+import { libraryEntryKey } from './library-shared.js';
+import { FACES, FACE_FAMILIES, UnsupportedFaceProfileError, countFaceCharacters, faceValidationError, renderFace, resolveFaceDisplay, type ActivityStyle, type FaceExpressions, type FaceFamily, type GeneratedFace, type GeneratedFaceV3, type FaceState, type SidebarWidth } from './faces.js';
 import { useFaceClock } from './hooks/useFaceClock.js';
 import { useActivity } from './hooks/useActivity.js';
 import { Button } from './components/ui/button.js';
@@ -20,22 +22,78 @@ export function usePreferences() {
   return { showActivity: values?.showActivity !== false, showHeader: values?.showHeader !== false, showSidebar: values?.showSidebar === true, useThemeColor: values?.useThemeColor === true,
     animation: values?.animation === 'off' || values?.animation === 'playful' ? values.animation : 'subtle', sidebarWidth, activityStyle, defaultFamily };
 }
-export function Face({ face, generated, expressions, state, animation, useThemeColor, sidebar = false, activityStyle = 'expressions', sidebarWidth = 'standard' }: {
+export function Face({ face, generated, expressions, state, animation, useThemeColor, sidebar = false, activityStyle = 'expressions', sidebarWidth = 'standard', glyphProfile = 'unicode' }: {
   face: string; generated?: GeneratedFace; expressions?: FaceExpressions; state?: FaceState; animation: string; useThemeColor: boolean; sidebar?: boolean;
-  activityStyle?: ActivityStyle; sidebarWidth?: SidebarWidth;
+  activityStyle?: ActivityStyle; sidebarWidth?: SidebarWidth; glyphProfile?: 'unicode' | 'ascii';
 }) {
   const isWorking = state === 'running';
   const elapsed = useFaceClock(!!generated && isWorking && animation !== 'off' && activityStyle === 'expressions');
-  const { displayed, marker } = resolveFaceDisplay(face, { generated, expressions, state, activityStyle, elapsed,
-    animation: isWorking && animation !== 'off' && elapsed > 0 });
+  let display;
+  try {
+    display = resolveFaceDisplay(face, { generated, expressions, state, activityStyle, elapsed,
+      profile: sidebar ? 'compact' : 'expressive', glyphProfile,
+      animation: isWorking && animation !== 'off' && elapsed > 0 });
+  } catch (cause) {
+    if (!(cause instanceof UnsupportedFaceProfileError)) throw cause;
+    return <span className="asciimoji-face text-muted-foreground" title={cause.message} aria-label={cause.message}>Profile unavailable</span>;
+  }
+  const { displayed, marker } = display;
   return <span key={face + activityStyle + (state ?? 'none')} className={`asciimoji-face${useThemeColor ? ' text-primary' : ''}${sidebar ? ' asciimoji-sidebar-face' : ''}`}
-    data-motion={animation} data-activity={state ?? 'none'} {...(sidebar ? { 'data-sidebar-width': sidebarWidth } : {})}
+    data-motion={animation} data-activity={state ?? 'none'} data-generated-version={generated?.version} {...(sidebar ? { 'data-sidebar-width': sidebarWidth } : {})}
     title={face + (state && state !== 'idle' ? ` (Activity: ${state})` : '')} aria-label={face + (state && state !== 'idle' ? `, ${state}` : '')}>
     {displayed}{marker && <span className="asciimoji-activity" aria-hidden="true">{marker}</span>}
   </span>;
 }
 
 export interface ProjectDefaultInfo { family: FaceFamily; origin: 'global' | 'project'; override: FaceFamily | null; }
+interface GenerationDefaultsInfo {
+  glyphProfile: 'unicode' | 'ascii';
+  glyphProfileOrigin: 'global' | 'project';
+  glyphProfileOverride: 'unicode' | 'ascii' | null;
+}
+function GenerationDefaults({ threadId, disabled }: { threadId: string; disabled: boolean }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const connection = useRealtimeConnectionState();
+  const { values } = useSettings();
+  const [info, setInfo] = useState<GenerationDefaultsInfo | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const revision = useRef(0);
+  const load = useCallback(() => {
+    const version = ++revision.current;
+    void rpc.call('getGenerationDefaults', { threadId }).then(value => {
+      if (version === revision.current) { setInfo(value); setError(null); }
+    }, cause => { if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Could not load generation defaults.'); });
+  }, [rpc, threadId]);
+  useEffect(() => { load(); return () => { revision.current++; }; }, [load, connection, values?.defaultGlyphProfile]);
+  useRealtime('changed', payload => { if (payload && typeof payload === 'object' && ('projectId' in payload || 'globalDefault' in payload)) load(); });
+  async function save(changes: { glyphProfile?: 'unicode' | 'ascii' | null }) {
+    if (pending) return;
+    setPending(true); setError(null);
+    const version = ++revision.current;
+    try {
+      const value = await rpc.call('setGenerationDefaults', { threadId, ...changes });
+      if (version === revision.current) setInfo(value);
+    } catch (cause) { if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Could not update generation defaults.'); }
+    finally { setPending(false); }
+  }
+  return <div className="mt-3 space-y-2">
+    <label className="flex items-center justify-between gap-2 text-sm">Project character glyphs
+      <select aria-label="Project default glyph profile" value={info ? info.glyphProfileOverride ?? 'global' : ''} disabled={disabled || pending || !info}
+        className="rounded-md border border-input bg-background px-2 py-1 text-sm" onChange={event => {
+          const glyphProfile = event.target.value;
+          void save(glyphProfile === 'global' ? { glyphProfile: null } : { glyphProfile: glyphProfile as 'unicode' | 'ascii' });
+        }}>
+        {!info && <option value="">Loading…</option>}
+        <option value="global">Use global default ({values?.defaultGlyphProfile === 'ascii' ? 'ASCII' : 'Unicode'})</option>
+        <option value="unicode">Unicode</option><option value="ascii">ASCII only</option>
+      </select>
+    </label>
+    <p className="text-xs text-muted-foreground">Changes affect following automatic faces and future threads. Saved thread choices keep their characters.</p>
+    {info && <p className="text-xs text-muted-foreground">Glyphs: {info.glyphProfile === 'ascii' ? 'ASCII' : 'Unicode'} ({info.glyphProfileOrigin}).</p>}
+    {error && <div><p role="alert" className="text-sm text-destructive">{error}</p><Button variant="outline" disabled={pending} onClick={load}>Retry generation defaults</Button></div>}
+  </div>;
+}
 function ProjectFamily({ threadId, disabled, onFamily }: { threadId: string; disabled: boolean; onFamily: (info: ProjectDefaultInfo) => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const connection = useRealtimeConnectionState();
@@ -95,79 +153,237 @@ function ProjectFamily({ threadId, disabled, onFamily }: { threadId: string; dis
   </div>;
 }
 
-function FaceLibrary({ identity, disabled, onApply }: {
-  identity: Identity; disabled: boolean; onApply: (entry: LibraryFace) => void;
+function FaceLibrary({ identity, disabled, onApply, onCharacterApply }: {
+  identity: Identity; disabled: boolean; onApply: (entry: LibraryFace) => void; onCharacterApply: (identity: Identity) => void;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const connection = useRealtimeConnectionState();
-  const [library, setLibrary] = useState<{ favorites: LibraryFace[]; recent: LibraryFace[] } | null>(null);
+  const [library, setLibrary] = useState<LibraryView | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [selectedAdds, setSelectedAdds] = useState<string[]>([]);
+  const [selectedRemoves, setSelectedRemoves] = useState<string[]>([]);
+  const [selectedRecentAdds, setSelectedRecentAdds] = useState<string[]>([]);
+  const [selectedRecentRemoves, setSelectedRecentRemoves] = useState<string[]>([]);
   const revision = useRef(0);
+  const libraryRevision = useRef(0);
+  const reviewTrigger = useRef<HTMLButtonElement>(null);
+  // Older test fixtures/windows may still return plain text entries.
+  const normalize = (value: LibraryView): LibraryView => ({ ...value,
+    favorites: value.favorites.map(entry => ({ ...entry, kind: entry.kind ?? 'text' }) as LibraryEntry),
+    recent: value.recent.map(entry => ({ ...entry, kind: entry.kind ?? 'text' }) as LibraryEntry) });
   const load = useCallback(() => {
     const version = ++revision.current;
+    const mutation = libraryRevision.current;
     void rpc.call('getLibrary', {}).then(value => {
-      if (version === revision.current) { setLibrary(value); setError(null); }
-    }, () => { if (version === revision.current) setError('Could not load your face library.'); });
+      if (version === revision.current && mutation === libraryRevision.current) { setLibrary(normalize(value)); setError(null); }
+    }, cause => { if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Could not load your face library.'); });
   }, [rpc]);
   useEffect(() => { load(); return () => { revision.current++; }; }, [load, connection]);
   useRealtime('library', load);
-  const entryKey = (entry: LibraryFace) => JSON.stringify([entry.face, entry.expressions?.running, entry.expressions?.waiting, entry.expressions?.error]);
-  const describeExpressions = (entry: LibraryFace) => {
-    const parts: string[] = [];
-    if (entry.expressions?.running) parts.push('running ' + entry.expressions.running);
-    if (entry.expressions?.waiting) parts.push('waiting ' + entry.expressions.waiting);
-    if (entry.expressions?.error) parts.push('error ' + entry.expressions.error);
-    return parts.join(', ');
-  };
-  const entryLabel = (entry: LibraryFace) => {
+  useEffect(() => {
+    const timer = setInterval(() => { if (!document.hidden && !pending) load(); }, 5000);
+    const visible = () => { if (!document.hidden && !pending) load(); };
+    document.addEventListener('visibilitychange', visible);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
+  }, [load, pending]);
+  useEffect(() => { setSelectedAdds([]); setSelectedRemoves([]); setSelectedRecentAdds([]); setSelectedRecentRemoves([]); }, [library?.legacyChanges?.fingerprint]);
+  const describeExpressions = (entry: LibraryEntry) => entry.kind === 'text' ?
+    (['running', 'waiting', 'error'] as const).flatMap(state => entry.expressions?.[state] ? [state + ' ' + entry.expressions[state]] : []).join(', ') : '';
+  const entryLabel = (entry: LibraryEntry) => {
     const detail = describeExpressions(entry);
-    return detail ? entry.face + ' (' + detail + ')' : entry.face;
+    return entry.face + (entry.kind === 'generated' ? ' (character)' : detail ? ' (' + detail + ')' : '');
   };
-  const current: LibraryFace = { face: identity.face, ...(identity.expressions ? { expressions: identity.expressions } : {}) };
-  const saved = !!library?.favorites.some(item => entryKey(item) === entryKey(current));
-  async function favorite(entry: LibraryFace, saved: boolean) {
+  const current: TextEntry = { kind: 'text', face: identity.face, ...(identity.expressions ? { expressions: identity.expressions } : {}) };
+  const saved = !!library?.favorites.some(entry => libraryEntryKey(entry) === libraryEntryKey(current));
+  async function update(action: () => Promise<LibraryView>, review = false) {
     if (pending) return;
-    setPending(true);
-    setError(null);
+    setPending(true); setError(null); libraryRevision.current++;
     const version = ++revision.current;
     try {
-      const value = await rpc.call('favorite', { ...entry, saved });
-      if (version === revision.current) setLibrary(value);
+      const value = await action();
+      if (version === revision.current) {
+        setLibrary(normalize(value));
+        if (review) { setReviewOpen(false); requestAnimationFrame(() => reviewTrigger.current?.focus()); }
+      }
     } catch (cause) {
-      if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Could not save your favorite.');
+      if (version === revision.current) {
+        const message = cause instanceof Error ? cause.message : 'Could not update your face library.';
+        setError(message);
+        if (message.includes('LEGACY_REVIEW_STALE')) load();
+      }
     } finally { setPending(false); }
   }
+  async function apply(entry: LibraryEntry) {
+    if (entry.kind === 'text') { onApply({ face: entry.face, ...(entry.expressions ? { expressions: entry.expressions } : {}) }); return; }
+    if (pending) return;
+    setPending(true); setError(null);
+    const version = ++revision.current;
+    try {
+      const value = await rpc.call('applyLibraryCharacter', { threadId: identity.threadId, snapshotId: entry.snapshotId });
+      if (version === revision.current) onCharacterApply(value);
+    } catch (cause) { if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Could not reuse this character.'); }
+    finally { setPending(false); }
+  }
+  const changes = library?.legacyChanges;
+  const toggle = (key: string, checked: boolean, setter: (value: (current: string[]) => string[]) => void) => setter(current => checked ? [...current, key] : current.filter(item => item !== key));
   return <div className="space-y-2">
-    <div className="flex items-center justify-between gap-2">
-      <p className="text-sm font-medium">Your face library</p>
-      <Button variant="outline" disabled={disabled || pending || !library}
-        onClick={() => void favorite(current, !saved)}>{saved ? 'Remove current favorite' : 'Favorite current face'}</Button>
+    <p className="text-sm font-medium">Your face library</p>
+    <div className="flex flex-wrap gap-2">
+      <Button variant="outline" disabled={disabled || pending || !library} onClick={() => void update(() => rpc.call('favorite', { face: current.face, ...(current.expressions ? { expressions: current.expressions } : {}), saved: !saved }))}>
+        {saved ? 'Remove saved text' : 'Save text'}
+      </Button>
+      {identity.generated && <Button variant="outline" disabled={disabled || pending || !library}
+        onClick={() => void update(() => rpc.call('favoriteCharacter', { threadId: identity.threadId, saved: true }))}>Save character</Button>}
     </div>
-    <p className="text-xs text-muted-foreground">Reuse favorite text and activity expressions in any thread.</p>
+    <p className="text-xs text-muted-foreground">Saved text keeps its expressions. Saved characters retain their paired traits, personality, and activity.</p>
+    {changes && <div className="space-y-2 rounded-md border p-3" role="status">
+      <p className="text-sm">An older Asciimoji window changed the face library. Your saved characters are preserved.</p>
+      <div className="flex flex-wrap gap-2">
+        <Button ref={reviewTrigger} variant="outline" disabled={pending} onClick={() => {
+          setReviewOpen(true); void update(() => rpc.call('reviewLibrary', {}));
+        }}>Review text changes</Button>
+        <Button variant="outline" disabled={pending} onClick={() => void update(() => rpc.call('reconcileLibrary', { fingerprint: changes.fingerprint, keepCurrent: true }), true)}>Keep current library</Button>
+      </div>
+      {reviewOpen && <div className="space-y-2" aria-label="Review older text changes">
+        <p className="text-xs text-muted-foreground">Select text changes to import. Character favorites stay saved. Reload older windows to load the current Asciimoji UI.</p>
+        {(['added', 'removed'] as const).map(kind => <fieldset key={kind} disabled={pending}>
+          <legend className="text-sm">{kind === 'added' ? 'Add text favorites' : 'Remove text favorites'}</legend>
+          {changes[kind].map(entry => <label key={libraryEntryKey(entry)} className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={(kind === 'added' ? selectedAdds : selectedRemoves).includes(libraryEntryKey(entry))}
+              onChange={event => toggle(libraryEntryKey(entry), event.target.checked, kind === 'added' ? setSelectedAdds : setSelectedRemoves)} />
+            <span className="font-mono">{entryLabel(entry)}</span>
+          </label>)}
+          {!changes[kind].length && <p className="text-xs text-muted-foreground">No text changes.</p>}
+        </fieldset>)}
+        {(changes.recentAdded || changes.recentRemoved) && <>
+          {(['recentAdded', 'recentRemoved'] as const).map(kind => <fieldset key={kind} disabled={pending}>
+            <legend className="text-sm">{kind === 'recentAdded' ? 'Add recent text faces' : 'Remove recent text faces'}</legend>
+            {(changes[kind] ?? []).map(entry => <label key={libraryEntryKey(entry)} className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={(kind === 'recentAdded' ? selectedRecentAdds : selectedRecentRemoves).includes(libraryEntryKey(entry))}
+                onChange={event => toggle(libraryEntryKey(entry), event.target.checked, kind === 'recentAdded' ? setSelectedRecentAdds : setSelectedRecentRemoves)} />
+              <span className="font-mono">{entryLabel(entry)}</span>
+            </label>)}
+            {!(changes[kind] ?? []).length && <p className="text-xs text-muted-foreground">No recent text changes.</p>}
+          </fieldset>)}
+        </>}
+        <Button disabled={pending} onClick={() => void update(() => rpc.call('reconcileLibrary', { fingerprint: changes.fingerprint, add: selectedAdds, remove: selectedRemoves,
+          ...(changes.recentAdded || changes.recentRemoved ? { recentAdd: selectedRecentAdds, recentRemove: selectedRecentRemoves } : {}) }), true)}>Import selected text changes</Button>
+        <Button variant="ghost" disabled={pending} onClick={() => { setReviewOpen(false); setSelectedAdds([]); setSelectedRemoves([]); setSelectedRecentAdds([]); setSelectedRecentRemoves([]); reviewTrigger.current?.focus(); }}>Cancel review</Button>
+      </div>}
+    </div>}
+    {library?.projectionPending && <p role="status" className="text-xs text-muted-foreground">Your saved characters are preserved. Updating the older text library is pending.</p>}
     {!library && !error && <p className="text-xs text-muted-foreground">Loading library…</p>}
     {library && <>
       <div className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto">
-        {library.favorites.map(entry => <div className="flex min-w-0 gap-1" key={entryKey(entry)}>
-          <Button variant="outline" className="min-w-0 flex-1 truncate font-mono text-xs"
-            disabled={disabled || pending} aria-label={'Reuse favorite: ' + entryLabel(entry)} onClick={() => onApply(entry)}><span className="truncate" title={entryLabel(entry)}>{entry.face}{describeExpressions(entry) ? <span className="ml-1 text-[10px] text-muted-foreground">▸ {entry.expressions?.running ?? entry.expressions?.waiting ?? entry.expressions?.error}</span> : null}</span></Button>
+        {library.favorites.map(entry => <div className="flex min-w-0 gap-1" key={libraryEntryKey(entry)}>
+          <Button variant="outline" className="min-w-0 flex-1 truncate font-mono text-xs" disabled={disabled || pending}
+            aria-label={'Reuse favorite: ' + entryLabel(entry)} onClick={() => void apply(entry)}>
+            <span className="truncate" title={entryLabel(entry)}>{entry.face}{entry.kind === 'generated' && <span className="ml-1 text-[10px] text-muted-foreground">character</span>}</span>
+          </Button>
           <Button variant="ghost" disabled={disabled || pending} aria-label={'Remove favorite: ' + entryLabel(entry)}
-            onClick={() => void favorite(entry, false)}>×</Button>
+            onClick={() => void update(() => rpc.call('removeLibraryEntry', { entry }))}>×</Button>
         </div>)}
       </div>
-      {!library.favorites.length && <p className="text-xs text-muted-foreground">Favorite a face to keep it here.</p>}
-      {!!library.recent.length && <details>
-        <summary className="cursor-pointer text-sm">Recent faces</summary>
+      {!library.favorites.length && <p className="text-xs text-muted-foreground">Save text or a character to keep it here.</p>}
+      {!!library.recent.length && <details><summary className="cursor-pointer text-sm">Recent faces</summary>
         <div className="mt-2 grid max-h-40 grid-cols-3 gap-2 overflow-y-auto">
-          {library.recent.map(entry => <Button key={entryKey(entry)} variant="outline" className="truncate font-mono text-xs"
-            disabled={disabled || pending} aria-label={'Reuse recent: ' + entryLabel(entry)}
-            onClick={() => onApply(entry)}><span className="truncate" title={entryLabel(entry)}>{entry.face}{describeExpressions(entry) ? <span className="ml-1 text-[10px] text-muted-foreground">▸ {entry.expressions?.running ?? entry.expressions?.waiting ?? entry.expressions?.error}</span> : null}</span></Button>)}
+          {library.recent.map(entry => <Button key={libraryEntryKey(entry)} variant="outline" className="truncate font-mono text-xs" disabled={disabled || pending}
+            aria-label={'Reuse recent: ' + entryLabel(entry)} onClick={() => void apply(entry)}><span className="truncate" title={entryLabel(entry)}>{entry.face}</span></Button>)}
         </div>
       </details>}
     </>}
-    {error && <div><p role="alert" className="text-sm text-destructive">{error}</p>
-      <Button variant="outline" disabled={pending} onClick={load}>Retry library</Button></div>}
+    {error && <div><p role="alert" className="text-sm text-destructive">{error}</p><Button variant="outline" disabled={pending} onClick={load}>Retry library</Button></div>}
   </div>;
+}
+
+type TraitLocks = { outline: boolean; eyes: boolean; mouth: boolean; accessory: boolean };
+function VariationGallery({ threadId, onSave, onCancel, glyphProfile }: {
+  threadId: string; onSave: (identity: Identity) => void; onCancel: () => void; glyphProfile?: 'unicode' | 'ascii';
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const preferences = usePreferences();
+  const [locks, setLocks] = useState<TraitLocks>({ outline: false, eyes: false, mouth: false, accessory: false });
+  const [resemblance, setResemblance] = useState<'close' | 'wide'>('close');
+  const [candidates, setCandidates] = useState<{ token: string; face: string; generated: GeneratedFaceV3 }[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const revision = useRef(0);
+  const initialLoad = useRef(false);
+  const load = useCallback(async (nextLocks?: TraitLocks, nextResemblance: 'close' | 'wide' = 'close') => {
+    const version = ++revision.current;
+    setPending(true); setError(null); setSelected(null); setCandidates([]); setNotice(null);
+    try {
+      const result = await rpc.call('candidates', { threadId, ...(nextLocks ? { locks: nextLocks } : {}), resemblance: nextResemblance, count: 6 });
+      if (version === revision.current) { setCandidates(result.candidates); setLocks(result.locks); setNotice(result.notice ?? null); initialLoad.current = true; }
+    } catch (cause) { if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Could not load variations.'); }
+    finally { if (version === revision.current) setPending(false); }
+  }, [rpc, threadId]);
+  useEffect(() => { void load(); return () => { revision.current++; }; }, [load]);
+  async function save() {
+    if (!selected || pending) return;
+    const version = ++revision.current;
+    setPending(true); setSaving(true); setError(null);
+    try {
+      const result = await rpc.call('applyCandidate', { threadId, token: selected });
+      if (version === revision.current) onSave(result);
+    } catch (cause) {
+      if (version === revision.current) {
+        const message = cause instanceof Error ? cause.message : 'Could not save this variation.';
+        setError(message);
+        if (message.includes('PREVIEW_EXPIRED')) { setCandidates([]); setSelected(null); }
+      }
+    } finally { if (version === revision.current) { setPending(false); setSaving(false); } }
+  }
+  const clearDrafts = () => { setCandidates([]); setSelected(null); setNotice(null); };
+  return <section className="space-y-3 rounded-lg border p-3" aria-label="Variation gallery">
+    <p className="text-sm font-medium">Explore related characters</p>
+    <p className="text-xs text-muted-foreground">Previews are drafts. Choose a character and Save variation to keep it. Personality stays the same.</p>
+    <fieldset disabled={pending} className="space-y-2">
+      <legend className="text-sm">Keep these traits</legend>
+      <div className="grid grid-cols-2 gap-2">
+        {(['outline', 'eyes', 'mouth', 'accessory'] as const).map(trait => <label key={trait} className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={locks[trait]} onChange={event => { setLocks(current => ({ ...current, [trait]: event.target.checked })); clearDrafts(); }} />
+          {trait === 'accessory' ? 'Accessories and decorations' : trait === 'eyes' ? 'Eye pair' : trait[0]!.toUpperCase() + trait.slice(1)}
+        </label>)}
+      </div>
+      <label className="flex items-center justify-between gap-2 text-sm">Resemblance
+        <select aria-label="Variation resemblance" value={resemblance} onChange={event => { setResemblance(event.target.value as 'close' | 'wide'); clearDrafts(); }}
+          className="rounded-md border border-input bg-background px-2 py-1 text-sm">
+          <option value="close">Close</option><option value="wide">Explore widely</option>
+        </select>
+      </label>
+    </fieldset>
+    <div role="radiogroup" aria-label="Variation previews" className="grid grid-cols-2 gap-2">
+      {candidates.map((candidate, index) => <Button key={candidate.token} role="radio" aria-checked={selected === candidate.token}
+        aria-label={'Variation ' + (index + 1) + ': ' + candidate.face} disabled={pending}
+        tabIndex={selected ? selected === candidate.token ? 0 : -1 : index === 0 ? 0 : -1}
+        variant={selected === candidate.token ? 'secondary' : 'outline'} onClick={() => setSelected(candidate.token)}
+        onKeyDown={event => {
+          if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? candidates.length - 1
+            : (index + (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1) + candidates.length) % candidates.length;
+          setSelected(candidates[next]!.token);
+          const group = event.currentTarget.parentElement;
+          (group?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next])?.focus();
+        }}>
+        <Face face={candidate.face} generated={candidate.generated} glyphProfile={glyphProfile} animation="off" useThemeColor={preferences.useThemeColor} />
+      </Button>)}
+    </div>
+    {pending && <p role="status" className="text-xs text-muted-foreground">Loading variations…</p>}
+    {notice && <p role="status" className="text-xs text-muted-foreground">{notice}</p>}
+    {error && <p role="alert" className="text-sm text-destructive">{error.includes('PREVIEW_EXPIRED') ? 'These previews expired. Refresh previews to continue. Your saved character has not changed.' : error}</p>}
+    <div className="flex flex-wrap gap-2">
+      <Button variant="outline" disabled={pending} onClick={() => void load(initialLoad.current ? locks : undefined, resemblance)}>Refresh previews</Button>
+      <Button disabled={pending || !selected} onClick={() => void save()}>Save variation</Button>
+      <Button variant="ghost" disabled={saving} onClick={onCancel}>Cancel variations</Button>
+    </div>
+  </section>;
 }
 
 function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
@@ -184,6 +400,10 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   const [expressions, setExpressions] = useState<FaceExpressions>({});
   const [editing, setEditing] = useState(false);
   const [previewState, setPreviewState] = useState<FaceState>('idle');
+  const [glyphProfile, setGlyphProfile] = useState<'unicode' | 'ascii'>('unicode');
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [projectDefaultsOpen, setProjectDefaultsOpen] = useState(false);
+  const galleryTrigger = useRef<HTMLButtonElement>(null);
   const [projectInfo, setProjectInfo] = useState<ProjectDefaultInfo | null>(null);
   const [previews, setPreviews] = useState<Partial<Record<FaceFamily, string>>>({});
   const [previewError, setPreviewError] = useState(false);
@@ -203,10 +423,11 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   const loadPreviews = useCallback(() => {
     const version = ++previewRevision.current;
     setPreviewError(false);
-    void rpc.call('previews', { threadId }).then(values => {
+    void rpc.call('previews', { threadId, ...(glyphProfile === 'ascii' ? { glyphProfile } : {}) }).then(values => {
       if (alive.current && version === previewRevision.current) setPreviews(Object.fromEntries(values.map(item => [item.family, item.face])));
     }, () => { if (alive.current && version === previewRevision.current) setPreviewError(true); });
-  }, [rpc, threadId]);
+  }, [rpc, threadId, glyphProfile]);
+  useEffect(() => { setGlyphProfile(identity?.glyphProfile ?? 'unicode'); }, [identity?.glyphProfile]);
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; revision.current++; previewRevision.current++; };
@@ -238,8 +459,8 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
   });
   const changeOpen = (value: boolean) => {
     setOpen(value);
-    if (value) { setEditing(false); setPreviewState('idle'); setError(null); }
-    else onClose?.();
+    if (value) { setEditing(false); setPreviewState('idle'); setGlyphProfile(identity?.glyphProfile ?? 'unicode'); setError(null); }
+    else { setGalleryOpen(false); onClose?.(); }
   };
   async function save(action: 'set' | 'shuffle' | 'reset' | 'generate' | 'vary', entry?: LibraryFace, family?: FaceFamily) {
     if (pending) return;
@@ -248,7 +469,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
     const version = ++revision.current;
     try {
       const value = action === 'set' ? await rpc.call('set', { threadId, ...(entry ?? { face: draft, expressions }) })
-        : action === 'generate' ? await rpc.call('generate', { threadId, ...(family ? { family } : {}) })
+        : action === 'generate' ? await rpc.call('generate', { threadId, ...(family ? { family } : {}), ...(glyphProfile === 'ascii' ? { glyphProfile } : {}) })
         : await rpc.call(action, { threadId });
       if (alive.current) {
         if (version === revision.current) setIdentity(value);
@@ -275,7 +496,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
         aria-label={identity ? 'Change thread asciimoji: ' + identity.face + (states[threadId] ? ', ' + states[threadId] : '')
           : error ? 'Retry thread asciimoji' : 'Loading thread asciimoji'}
         onClick={event => { if (!identity) { event.preventDefault(); load(); } }}>
-        {identity ? <Face face={identity.face} generated={identity.generated} expressions={identity.expressions}
+        {identity ? <Face face={identity.face} generated={identity.generated} glyphProfile={identity.glyphProfile} expressions={identity.expressions}
           state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
           : error ? <span title={error}>Retry face</span> : 'Loading…'}
       </Button>
@@ -290,7 +511,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
         {error && <Button variant="outline" onClick={load}>Retry face</Button>}</div> : <>
         <div className="space-y-2">
           <div className="asciimoji-preview rounded-lg bg-muted p-5 text-center font-mono text-2xl" title={preview} aria-label={editing ? 'Draft asciimoji preview' : 'Current asciimoji'}>
-            <Face face={preview} generated={editing ? undefined : identity.generated} expressions={previewExpressions} state={previewActivity}
+            <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewActivity}
               animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
           </div>
           <p className="text-xs text-muted-foreground" role="status">
@@ -299,11 +520,19 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
         </div>
         <div className="space-y-2">
           <p className="text-sm font-medium">Keep a family for this thread</p>
+          <label className="flex items-center justify-between gap-2 text-sm">Character glyphs
+            <select aria-label="Character glyph profile" value={glyphProfile} disabled={pending}
+              className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+              onChange={event => { setPreviews({}); setGlyphProfile(event.target.value as 'unicode' | 'ascii'); }}>
+              <option value="unicode">Unicode</option><option value="ascii">ASCII only</option>
+            </select>
+          </label>
+          <p className="text-xs text-muted-foreground">Characters have paired traits and personality. Choose a family to save a new character.</p>
           <div className="grid grid-cols-3 gap-2">
             {FACE_FAMILIES.map(item => <Button key={item.id}
-              variant={identity.generated && (identity.generated.family ?? 'classic') === item.id ? 'secondary' : 'outline'}
+              variant={identity.generated && (identity.glyphProfile ?? 'unicode') === glyphProfile && (identity.generated.family ?? 'classic') === item.id ? 'secondary' : 'outline'}
               className="h-auto flex-col gap-1 px-1 py-2" disabled={pending || !previews[item.id]}
-              aria-pressed={!!identity.generated && (identity.generated.family ?? 'classic') === item.id}
+              aria-pressed={!!identity.generated && (identity.glyphProfile ?? 'unicode') === glyphProfile && (identity.generated.family ?? 'classic') === item.id}
               aria-label={'Keep ' + item.name + ' family'} onClick={() => void save('generate', undefined, item.id)}>
               <span className="font-mono text-xs"><Face face={previews[item.id] ?? '…'} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} /></span>
               <span className="text-xs text-muted-foreground">{item.name}</span>
@@ -312,6 +541,11 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
           {previewError && <div><p role="alert" className="text-sm text-destructive">Could not load family previews.</p>
             <Button variant="outline" onClick={loadPreviews}>Retry previews</Button></div>}
           <Button variant="outline" disabled={pending} onClick={() => void save('vary')}>Try another variation</Button>
+          {identity.generated?.version === 3 && !galleryOpen && <Button ref={galleryTrigger} variant="outline" disabled={pending}
+            onClick={() => setGalleryOpen(true)}>Explore variations</Button>}
+          {identity.generated?.version === 3 && galleryOpen && <VariationGallery key={JSON.stringify(identity.generated)} threadId={threadId} glyphProfile={identity.glyphProfile}
+            onSave={value => { setIdentity(value); changeOpen(false); }}
+            onCancel={() => { setGalleryOpen(false); requestAnimationFrame(() => galleryTrigger.current?.focus()); }} />}
           <p className="text-xs text-muted-foreground">A variation is saved for this thread. Children in the same generated family share their parent’s eyes.</p>
         </div>
         <details open>
@@ -326,7 +560,7 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
             </Button>)}
           </div>
         </details>
-        <FaceLibrary identity={identity} disabled={pending} onApply={entry => void save('set', entry)} />
+        <FaceLibrary identity={identity} disabled={pending} onApply={entry => void save('set', entry)} onCharacterApply={value => { setIdentity(value); changeOpen(false); }} />
         <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!draftError && !expressionError) void save('set'); }}>
           <label htmlFor={'asciimoji-custom-' + threadId} className="text-sm font-medium">Custom face</label>
           <div className="flex gap-2">
@@ -367,17 +601,18 @@ function ThreadFace({ threadId, pickerOnly = false, onClose, restoreFocus }: {
             <summary className="cursor-pointer text-xs text-muted-foreground">Preview at header and sidebar size</summary>
             <div className="mt-2 flex items-center gap-3">
               <span className="max-w-40 truncate font-mono text-xs" aria-label="Header size preview" title={preview}>
-                <Face face={preview} expressions={previewExpressions} state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
+                <Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions} state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} />
               </span>
-              <span aria-label="Sidebar size preview" title={preview}><Face face={preview} expressions={previewExpressions}
+              <span aria-label="Sidebar size preview" title={preview}><Face face={preview} generated={editing ? undefined : identity.generated} glyphProfile={editing ? 'unicode' : identity.glyphProfile} expressions={previewExpressions}
                 state={previewState} animation="off" useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} /></span>
             </div>
           </details>
         </form>
         {error && <div><p role="alert" className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={load} disabled={pending}>Reload face</Button></div>}
-        <details>
+        <details onToggle={event => setProjectDefaultsOpen(event.currentTarget.open)}>
           <summary className="cursor-pointer text-sm">Project defaults</summary>
           <div className="mt-2"><ProjectFamily threadId={threadId} disabled={pending} onFamily={setProjectInfo} /></div>
+          {projectDefaultsOpen && <GenerationDefaults threadId={threadId} disabled={pending} />}
         </details>
         <div className="flex justify-between gap-2">
           <Button variant="outline" disabled={pending} onClick={() => void save('shuffle')}>Surprise me</Button>
@@ -489,7 +724,7 @@ function SidebarFaces() {
       onPointerDown={event => event.stopPropagation()}
       onClick={event => { event.preventDefault(); event.stopPropagation(); opener.current = event.currentTarget; setPickerThread(threadId); }}>
       <span title={`Thread asciimoji: ${faces[threadId]?.face ?? 'Loading…'}`}>
-        <Face face={faces[threadId]?.face ?? '…'} generated={faces[threadId]?.generated} expressions={faces[threadId]?.expressions}
+        <Face face={faces[threadId]?.face ?? '…'} generated={faces[threadId]?.generated} glyphProfile={faces[threadId]?.glyphProfile} expressions={faces[threadId]?.expressions}
           state={states[threadId]} animation={preferences.animation} useThemeColor={preferences.useThemeColor} activityStyle={preferences.activityStyle} sidebar sidebarWidth={preferences.sidebarWidth} />
       </span>
     </Button>, element, `${threadId}:${index}`); })}

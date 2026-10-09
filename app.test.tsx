@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { loadPluginApp, mountPluginContentScripts, renderSlot } from '@get-bb/plugin-sdk/testing/app';
-import appDefinition from './app.js';
+import appDefinition, { Face } from './app.js';
 import type { rpcContract } from './server.js';
 import { useFaceClock } from './hooks/useFaceClock.js';
 import { generateFace, renderFace, type FaceFamily } from './faces.js';
+import { generateFaceV3 } from './family-definitions.js';
+import { libraryEntryKey } from './library-shared.js';
+import type { LibraryView } from './library.js';
 import type { PluginThreadHeaderActionProps } from '@get-bb/plugin-sdk';
 
 Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: vi.fn().mockImplementation(() => ({
@@ -22,9 +25,18 @@ async function mount(settings: Record<string, string | boolean> = {}) {
     settings: { showActivity: false, ...settings },
     rpc: {
       getProjectDefault: () => ({ family: effectiveFamily(), origin: (projectOverride ? 'project' : 'global') as 'project' | 'global', override: projectOverride }),
+      getGenerationDefaults: () => ({ glyphProfile: 'unicode', glyphProfileOrigin: 'global', glyphProfileOverride: null }),
+      setGenerationDefaults: () => ({ glyphProfile: 'unicode', glyphProfileOrigin: 'global', glyphProfileOverride: null }),
       previews: ({ threadId }) => ['classic', 'bear', 'robot', 'cat', 'minimal'].map(family => ({ family: family as FaceFamily, face: renderFace(generateFace(threadId, family as FaceFamily)) })),
       getLibrary: () => ({ favorites: [], recent: [] }),
-      favorite: ({ face, expressions, saved }) => ({ favorites: saved ? [{ face, ...(expressions ? { expressions } : {}) }] : [], recent: [] }),
+      candidates: () => ({ candidates: [], locks: { outline: false, eyes: false, mouth: false, accessory: false } }),
+      applyCandidate: ({ threadId }) => ({ threadId, face, projectId: 'proj_personal', source: 'custom' as const }),
+      favorite: ({ face, expressions, saved }) => ({ favorites: saved ? [{ kind: 'text' as const, face, ...(expressions ? { expressions } : {}) }] : [], recent: [] }),
+      favoriteCharacter: () => ({ favorites: [], recent: [] }),
+      removeLibraryEntry: () => ({ favorites: [], recent: [] }),
+      applyLibraryCharacter: ({ threadId }) => ({ threadId, face, projectId: 'proj_personal', source: 'custom' as const }),
+      reviewLibrary: () => ({ favorites: [], recent: [] }),
+      reconcileLibrary: () => ({ favorites: [], recent: [] }),
       vary: ({ threadId }) => { const generated = generateFace(threadId, effectiveFamily()); face = renderFace(generated); return { threadId, face, projectId: 'proj_personal', source: 'generated' as const, generated }; },
       setProjectDefault: ({ family }: { family: FaceFamily | null }) => { projectOverride = family; return { family: effectiveFamily(), origin: (projectOverride ? 'project' : 'global') as 'project' | 'global', override: projectOverride }; },
       generate: ({ threadId, family }) => { const generated = generateFace(threadId, family ?? effectiveFamily()); face = renderFace(generated); return { threadId, face, projectId: 'proj_personal', source: 'custom' as const, generated }; },
@@ -451,7 +463,7 @@ test('favorites update live and reuse their activity expressions', async () => {
   });
   try {
     fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: :D' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Favorite current face' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save text' }));
     await screen.findByRole('button', { name: 'Reuse favorite: :D (waiting :?)' });
     favorites = [{ face: ':-)', expressions: { waiting: ':?' } }];
     await slot.behavior.emitRealtime('library', {});
@@ -687,7 +699,7 @@ test('project picker offers global default and labels automatic scope', async ()
     fireEvent.click(await screen.findByText('Project defaults'));
     const select = await screen.findByRole('combobox', { name: 'Project default face family' });
     await waitFor(() => expect((select as HTMLSelectElement).disabled).toBe(false));
-    expect(screen.getByRole('option', { name: /Use global default/ })).toBeTruthy();
+    expect(within(select).getByRole('option', { name: /Use global default/ })).toBeTruthy();
     fireEvent.change(select, { target: { value: 'global' } });
     await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'setProjectDefault' && (call.input as {family:string|null}).family === null)).toBe(true));
     expect(await screen.findByRole('button', { name: 'Use automatic face' })).toBeTruthy();
@@ -710,8 +722,246 @@ test('settings preview renders states without backend RPC', async () => {
     fireEvent.change(family, { target: { value: 'cat' } });
     expect((family as HTMLSelectElement).value).toBe('cat');
     expect(rpc).not.toHaveBeenCalled(); // preview uses local generation only
+    expect(preview.querySelectorAll('[data-generated-version="3"]').length).toBe(8);
     const width = screen.getByRole('combobox', { name: 'Preview sidebar width' });
     fireEvent.change(width, { target: { value: 'expanded' } });
     await waitFor(() => expect(document.querySelector('[data-sidebar-width="expanded"]')).toBeTruthy());
   } finally { slot.lifecycle.unmount(); }
+});
+
+test('expanded faces use saved compact geometry and reserve marker space', () => {
+  const generated = generateFaceV3('compact-preview', 'cat');
+  const face = renderFace(generated);
+  const { container, rerender } = render(<Face face={face} generated={generated} state="waiting" animation="off" useThemeColor={false} sidebar activityStyle="markers" />);
+  expect(container.textContent).toBe(generated.renderings!.compact!.idle + '?');
+  expect(container.querySelector('.asciimoji-face')?.getAttribute('aria-label')).toBe(face + ', waiting');
+  rerender(<Face face={face} generated={generated} state="error" animation="off" useThemeColor={false} sidebar />);
+  expect(container.textContent).toBe(generated.renderings!.compact!.error + '!');
+  rerender(<Face face={face} generated={generated} state="running" animation="off" useThemeColor={false} />);
+  expect(container.textContent).toBe((generated.renderings?.expressive?.running ?? generated.base.running) + '·');
+});
+
+test('family previews load drafts and only generate after choosing a family', async () => {
+  const { slot } = await mount();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'previews')).toBe(true));
+    expect(slot.inspection.rpcCalls.some(call => call.method === 'generate')).toBe(false);
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep Cats family' }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'generate' && JSON.stringify(call.input) === JSON.stringify({ threadId: 'thr_one', family: 'cat' }))).toBe(true));
+  } finally { slot.lifecycle.unmount(); }
+});
+
+async function mountGallery(expire = false) {
+  const app = await loadPluginApp(appDefinition);
+  const generated = generateFaceV3('gallery', 'cat');
+  const options = [generated, generateFaceV3('gallery', 'cat', { seed: 1 })];
+  const identity = { threadId: 'thr_one', face: renderFace(generated), projectId: 'proj_personal', source: 'generated' as const, generated };
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false, animation: 'off' }, rpc: {
+      get: () => identity,
+      previews: () => [],
+      getProjectDefault: () => ({ family: 'cat', origin: 'global', override: null }),
+      getLibrary: () => ({ favorites: [], recent: [] }),
+      candidates: () => ({ candidates: options.map((item, index) => ({ token: 'token-' + index, face: renderFace(item), generated: item })), locks: { outline: false, eyes: true, mouth: false, accessory: false } }),
+      applyCandidate: (input: unknown) => {
+        const { token } = input as { token: string };
+        if (expire) throw new Error('PREVIEW_EXPIRED: Refresh previews');
+        const item = options[Number(token.slice(-1))]!;
+        return { ...identity, face: renderFace(item), generated: item };
+      },
+    },
+  });
+  fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: ' + identity.face }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Explore variations' }));
+  await screen.findByRole('radio', { name: 'Variation 1: ' + identity.face });
+  return { slot, options };
+}
+
+test('variation gallery preserves drafts until explicit save and supports keyboard selection', async () => {
+  const { slot, options } = await mountGallery();
+  try {
+    expect((screen.getByRole('checkbox', { name: 'Eye pair' }) as HTMLInputElement).checked).toBe(true);
+    const first = screen.getByRole('radio', { name: 'Variation 1: ' + renderFace(options[0]!) });
+    fireEvent.keyDown(first, { key: 'ArrowRight' });
+    expect(screen.getByRole('radio', { name: 'Variation 2: ' + renderFace(options[1]!) }).getAttribute('aria-checked')).toBe('true');
+    expect(slot.inspection.rpcCalls.some(call => call.method === 'applyCandidate')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Save variation' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(slot.inspection.rpcCalls.find(call => call.method === 'applyCandidate')?.input).toEqual({ threadId: 'thr_one', token: 'token-1' });
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('variation cancellation discards drafts and restores trigger focus', async () => {
+  const { slot } = await mountGallery();
+  try {
+    fireEvent.click(screen.getAllByRole('radio')[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel variations' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Explore variations' })));
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(slot.inspection.rpcCalls.some(call => call.method === 'applyCandidate')).toBe(false);
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('expired variation previews offer refresh without closing picker', async () => {
+  const { slot } = await mountGallery(true);
+  try {
+    fireEvent.click(screen.getAllByRole('radio')[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Save variation' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Refresh previews');
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh previews' }));
+    await waitFor(() => expect(screen.getAllByRole('radio')).toHaveLength(2));
+    expect(slot.inspection.rpcCalls.filter(call => call.method === 'candidates')).toHaveLength(2);
+  } finally { slot.lifecycle.unmount(); }
+});
+
+async function mountLibraryReview(stale = false, recents = false) {
+  const app = await loadPluginApp(appDefinition);
+  const generated = generateFaceV3('saved-character', 'bear');
+  const face = renderFace(generated);
+  const character = { kind: 'generated' as const, face, snapshotId: 'b'.repeat(64) };
+  const added = { kind: 'text' as const, face: ':NEW' };
+  const removed = { kind: 'text' as const, face };
+  let view: LibraryView = { favorites: [character, { kind: 'text', face }], recent: [], legacyChanges: { fingerprint: 'a'.repeat(64), added: [added], removed: [removed] } };
+  if (recents) view.legacyChanges = { fingerprint: 'a'.repeat(64), added: [], removed: [], recentAdded: [{ kind: 'text', face: ':RECENT' }], recentRemoved: [{ kind: 'text', face: ':OLD' }] };
+  const identity = { threadId: 'thr_one', projectId: 'proj_personal', source: 'generated' as const, face, generated };
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: 'thr_one', projectId: 'proj_personal', isCompactViewport: false }, {
+    settings: { showActivity: false, animation: 'off' }, rpc: {
+      get: () => identity,
+      getProjectDefault: () => ({ family: 'bear', origin: 'global', override: null }),
+      previews: () => [],
+      getLibrary: () => view,
+      reviewLibrary: () => view,
+      favoriteCharacter: () => view,
+      applyLibraryCharacter: () => identity,
+      removeLibraryEntry: () => view,
+      reconcileLibrary: () => {
+        if (stale) { view = { ...view, legacyChanges: { fingerprint: 'c'.repeat(64), added: [{ kind: 'text', face: ':LATEST' }], removed: [] } }; throw new Error('LEGACY_REVIEW_STALE: Refresh review.'); }
+        view = { favorites: [character], recent: [] }; return view;
+      },
+    },
+  });
+  fireEvent.click(await screen.findByRole('button', { name: 'Change thread asciimoji: ' + face }));
+  await screen.findByText('An older Asciimoji window changed the face library. Your saved characters are preserved.');
+  return { slot, character, added, removed };
+}
+
+test('legacy library review imports selected text changes while preserving character entries', async () => {
+  const { slot, character, added } = await mountLibraryReview();
+  try {
+    expect(screen.getByRole('button', { name: 'Reuse favorite: ' + character.face + ' (character)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reuse favorite: ' + character.face })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Review text changes' }));
+    const review = await screen.findByLabelText('Review older text changes');
+    fireEvent.click(within(review).getByRole('checkbox', { name: ':NEW' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import selected text changes' }));
+    await waitFor(() => expect(screen.queryByText('An older Asciimoji window changed the face library. Your saved characters are preserved.')).toBeNull());
+    expect(slot.inspection.rpcCalls.find(call => call.method === 'reconcileLibrary')?.input).toEqual({ fingerprint: 'a'.repeat(64), add: [libraryEntryKey(added)], remove: [] });
+    expect(screen.getByRole('button', { name: 'Reuse favorite: ' + character.face + ' (character)' })).toBeTruthy();
+    expect(slot.inspection.rpcCalls.some(call => call.method === 'removeLibraryEntry')).toBe(false);
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('stale library review refreshes text changes and clears selections', async () => {
+  const { slot } = await mountLibraryReview(true);
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Review text changes' }));
+    const review = await screen.findByLabelText('Review older text changes');
+    fireEvent.click(within(review).getByRole('checkbox', { name: ':NEW' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import selected text changes' }));
+    const latest = await screen.findByRole('checkbox', { name: ':LATEST' });
+    expect((latest as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByRole('checkbox', { name: ':NEW' })).toBeNull();
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('character favorites use snapshot application and explicit saving', async () => {
+  const { slot, character } = await mountLibraryReview();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Save character' }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'favoriteCharacter')).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Reuse favorite: ' + character.face + ' (character)' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(slot.inspection.rpcCalls.find(call => call.method === 'applyLibraryCharacter')?.input).toEqual({ threadId: 'thr_one', snapshotId: character.snapshotId });
+    expect(slot.inspection.rpcCalls.some(call => call.method === 'set')).toBe(false);
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('ASCII drafts stay printable and settings preview contains printable ASCII', async () => {
+  const { slot } = await mount();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Character glyph profile' }), { target: { value: 'ascii' } });
+    await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'previews' && (call.input as { glyphProfile?: string }).glyphProfile === 'ascii')).toBe(true));
+    expect(slot.inspection.rpcCalls.some(call => call.method === 'generate')).toBe(false);
+  } finally { slot.lifecycle.unmount(); }
+  const app = await loadPluginApp(appDefinition);
+  const settings = renderSlot(app.settingsSections[0]!, {}, { settings: { animation: 'off' }, rpc: {} });
+  try {
+    fireEvent.change(screen.getByRole('combobox', { name: 'Preview glyph profile' }), { target: { value: 'ascii' } });
+    for (const element of Array.from(document.querySelectorAll('[data-generated-version="3"]'))) expect(element.textContent).toMatch(/^[ -~]+$/);
+    expect(settings.inspection.rpcCalls).toHaveLength(0);
+  } finally { settings.lifecycle.unmount(); }
+});
+
+test('project glyph override saves and restores', async () => {
+  const { slot } = await mount();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' }));
+    fireEvent.click(await screen.findByText('Project defaults'));
+    const glyphs = await screen.findByRole('combobox', { name: 'Project default glyph profile' });
+    await waitFor(() => expect((glyphs as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(glyphs, { target: { value: 'ascii' } });
+    await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'setGenerationDefaults' && JSON.stringify(call.input) === JSON.stringify({ threadId: 'thr_one', glyphProfile: 'ascii' }))).toBe(true));
+    fireEvent.change(glyphs, { target: { value: 'unicode' } });
+    await waitFor(() => expect(slot.inspection.rpcCalls.some(call => call.method === 'setGenerationDefaults' && JSON.stringify(call.input) === JSON.stringify({ threadId: 'thr_one', glyphProfile: 'unicode' }))).toBe(true));
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('Keep current library resolves older text discrepancy explicitly', async () => {
+  const { slot, character } = await mountLibraryReview();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Keep current library' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Keep current library' })).toBeNull());
+    expect(slot.inspection.rpcCalls.find(call => call.method === 'reconcileLibrary')?.input).toEqual({ fingerprint: 'a'.repeat(64), keepCurrent: true });
+    expect(screen.getByRole('button', { name: 'Reuse favorite: ' + character.face + ' (character)' })).toBeTruthy();
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('older recent-text changes require explicit review selection', async () => {
+  const { slot } = await mountLibraryReview(false, true);
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Review text changes' }));
+    const review = await screen.findByLabelText('Review older text changes');
+    expect((within(review).getByRole('checkbox', { name: ':RECENT' }) as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(within(review).getByRole('checkbox', { name: ':OLD' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import selected text changes' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Keep current library' })).toBeNull());
+    expect(slot.inspection.rpcCalls.find(call => call.method === 'reconcileLibrary')?.input).toEqual({ fingerprint: 'a'.repeat(64), add: [], remove: [], recentAdd: [], recentRemove: [libraryEntryKey({ kind: 'text', face: ':OLD' })] });
+  } finally { slot.lifecycle.unmount(); }
+});
+
+test('library fallback polls only while visible and stops when picker closes', async () => {
+  const { slot } = await mount();
+  vi.useFakeTimers();
+  try {
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Change thread asciimoji: :-)' })); });
+    const count = () => slot.inspection.rpcCalls.filter(call => call.method === 'getLibrary').length;
+    const initial = count();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(count()).toBe(initial + 1);
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(count()).toBe(initial + 1);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })); });
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(count()).toBe(initial + 1);
+  } finally {
+    slot.lifecycle.unmount();
+    delete (document as unknown as { hidden?: boolean }).hidden;
+    vi.useRealTimers();
+  }
 });

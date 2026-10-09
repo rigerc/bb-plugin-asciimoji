@@ -56,7 +56,7 @@
   "scripts": {
     "build": "bb plugin build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test server.test.ts && vitest run app.test.tsx",
+    "test": "tsx --test server.test.ts catalog.test.ts library.test.ts && vitest run app.test.tsx",
     "check:publish": "node scripts/check-publish.mjs",
     "check:publish:metadata": "node scripts/check-publish.mjs --metadata-only"
   }

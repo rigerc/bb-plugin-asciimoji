@@ -65,4 +65,16 @@ needed. Faces do not change conversation titles or agent prompts.
 
 Try another variation saves a different generated face in the current family. Keep a family saves an override; Use automatic face lets the thread track future global and project defaults. The picker labels automatic choices as Following global/project default and overrides as Saved for this thread, and family previews match what will be saved.
 
-Favorite current face saves reusable text and custom expressions across threads. The face library holds 50 favorites and the 20 most recent distinct choices, syncs across windows, and persists across reloads. Generated favorites reuse their static text with activity markers.
+Characters have paired eyes,
+layered decorations, a fixed personality, and saved compact geometry. Their
+activity expressions preserve the eyes. Unicode and printable ASCII generation
+are available; project defaults can inherit global generation choices.
+
+Variations offer trait locks and a draft gallery. Select a preview and
+Save to pin it; cancelling leaves the saved face unchanged. Expired previews offer
+Refresh.
+
+Save text preserves reusable text and expressions; Save character preserves the
+generated identity and activity behavior. The library holds 50 favorites and 20
+distinct recent choices. Characters remain intact if an older window changes its
+text library; the current picker offers an explicit text-change review.

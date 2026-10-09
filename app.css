@@ -3,6 +3,7 @@
 .asciimoji-sidebar-face[data-sidebar-width="compact"] { max-width: 6ch; }
 .asciimoji-sidebar-face[data-sidebar-width="standard"] { max-width: 10ch; }
 .asciimoji-sidebar-face[data-sidebar-width="expanded"] { max-width: 16ch; }
+.asciimoji-sidebar-face[data-generated-version="3"] .asciimoji-activity { margin-left: 0; }
 .asciimoji-face[data-motion="subtle"] { animation: asciimoji-arrive 220ms ease-out; }
 .asciimoji-face[data-motion="playful"]:not([data-activity="running"]) { animation: asciimoji-arrive 280ms ease-out; }
 .asciimoji-face[data-motion="playful"][data-activity="running"] { animation: asciimoji-arrive 280ms ease-out, asciimoji-bob 6s ease-in-out 280ms infinite; }
